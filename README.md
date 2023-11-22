@@ -1,2 +1,2 @@
 # Spruce Budworm Stream Microbiome Repository
-This repository contains the code used for the publication McCaig et al 2024 
+This repository contains the code used for the publication McCaig et al in prep 
