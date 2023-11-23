@@ -1,0 +1,1458 @@
+---
+title: "SBWD Manuscript"
+author: "Madison McCaig"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.width=12, fig.height=8)
+```
+
+```{r load packages, message = FALSE, warning = FALSE}
+library(tidyverse)
+library("ggpubr")
+library(rdacca.hp)
+library(vegan)
+library(car)
+library(stringr)
+library(viridis)
+library(ggExtra)
+library(corrplot)
+library(phyloseq)   
+require(microbiome)
+library(viridis)
+library(factoextra)
+require(pairwiseAdonis)
+library(ALDEx2)
+library(ggnewscale)
+```
+
+# Load Data 
+
+- load in data from https://github.com/GLFC-WET/SBWD_master (will be made public when the associated papers are accepted)
+- 16S and ITS sequence data is on NCBI (PRJNA1041793) and will be released to the public when the paper is accepted
+
+```{r}
+setwd("~/GitHub/SBWD_master/data")
+```
+
+## Defoliation and mortality data
+
+- load defoliation data and create intermediate HAiFLO files for defoliation from 2019-2021
+  - create both an annual file and a cumulative file (sum of defo from start of outbreak in 2016 to current year)
+- load mortality data as well
+  - this is the % area of the polygon that has tree top mortality and is also hydroweighted (HAIFLO)
+  - note that we only have this data for helicopter surveys (i.e. starting in 2020)
+  - mortality not captured in 2019 with the QC aerial surveys
+
+```{r create defoliation adn mortality files}
+watersheds_hydroweight_statistics <- readRDS("~/GitHub/SBWD_master/data/watersheds_hydroweight_statistics.RDS")
+watersheds_hydroweight_statistics$year <- as.factor(watersheds_hydroweight_statistics$year)
+
+#annual data
+HAIFLO_2020_2021 <- watersheds_hydroweight_statistics %>%
+dplyr::filter(parameter == "Defo_SpFirweighted") %>%
+  filter (summary.metric_or_category == "mean") %>%
+  filter(hydroweighting == "HAiFLO") %>%
+   filter(year %in% c("2020", "2021")) %>%
+  filter(Collection_type == "Helicopter")
+
+#get 2019 subset of QC aerial survey data (spruce fir weighted, HaiFLO)
+HAIFLO_2019 <- watersheds_hydroweight_statistics %>%
+dplyr::filter(parameter == "Defo_SpFirweighted") %>%
+  filter (summary.metric_or_category == "mean") %>%
+  filter(hydroweighting == "HAiFLO") %>%
+   filter(year == "2019") %>%
+  filter(Collection_type == "QC_aerial")
+
+#join together
+HAIFLO <- bind_rows(HAIFLO_2019, HAIFLO_2020_2021)
+
+HAIFLO<- HAIFLO %>%
+  dplyr::select(1,2,4) %>%
+  rename(ydefo = value)
+
+#cumulative data 
+
+#2021 cumulative defo
+cumulative_defo21_1 <- watersheds_hydroweight_statistics %>%
+dplyr::filter(parameter == "Defo_SpFirweighted") %>%
+  filter(summary.metric_or_category == "mean") %>%
+  filter(hydroweighting == "HAiFLO") %>%
+  filter(Collection_type == "QC_aerial") %>%
+  filter(year %in% c("2016", "2017", "2018", "2019"))
+
+cumulative_defo21_2 <- watersheds_hydroweight_statistics %>%
+dplyr::filter(parameter == "Defo_SpFirweighted") %>%
+  filter (summary.metric_or_category == "mean") %>%
+  filter(hydroweighting == "HAiFLO") %>%
+   filter(year %in% c("2020", "2021")) %>%
+  filter(Collection_type == "Helicopter")
+
+cumulative_defo21 <- bind_rows(cumulative_defo21_1, cumulative_defo21_2)
+
+cumulative_defo21 <- cumulative_defo21 %>%
+  group_by(site) %>%
+  summarize(Cumulative_Defo_2021=sum(value)) %>%
+  ungroup()
+
+#2020 cumulative defo
+cumulative_defo20_1 <- watersheds_hydroweight_statistics %>%
+dplyr::filter(parameter == "Defo_SpFirweighted") %>%
+  filter (summary.metric_or_category == "mean") %>%
+  filter(hydroweighting == "HAiFLO") %>%
+  filter(Collection_type == "QC_aerial") %>%
+  filter(year %in% c("2016", "2017", "2018", "2019"))
+
+cumulative_defo20_2 <- watersheds_hydroweight_statistics %>%
+dplyr::filter(parameter == "Defo_SpFirweighted") %>%
+  filter (summary.metric_or_category == "mean") %>%
+  filter(hydroweighting == "HAiFLO") %>%
+  filter(Collection_type == "Helicopter") %>%
+  filter(year == "2020")
+
+cumulative_defo20 <- bind_rows(cumulative_defo20_1, cumulative_defo20_2)
+
+cumulative_defo20 <- cumulative_defo20 %>%
+  group_by(site) %>%
+  summarize(Cumulative_Defo_2020=sum(value)) %>%
+  ungroup()
+
+#2019 cumulative defo
+cumulative_defo19 <- watersheds_hydroweight_statistics %>%
+dplyr::filter(parameter == "Defo_SpFirweighted") %>%
+  filter (summary.metric_or_category == "mean") %>%
+  filter(hydroweighting == "HAiFLO") %>%
+  filter(Collection_type == "QC_aerial") %>%
+  filter(year %in% c("2016", "2017", "2018", "2019"))
+
+cumulative_defo19 <- cumulative_defo19 %>%
+  group_by(site) %>%
+  summarize(Cumulative_Defo_2019=sum(value)) %>%
+  ungroup()
+
+#join all years together 
+cumulative_HaiFLO <- cumulative_defo21 %>%
+left_join(cumulative_defo19, by = "site") %>%
+  left_join(cumulative_defo20, by = "site")
+
+cumulative_HaiFLO <- cumulative_HaiFLO[, c(1, 3, 4, 2)]
+#saveRDS(cumulative_HaiFLO, file="cumulative_HaiFLO.RDS")
+
+#long format
+cumulative_HaiFLO$DefoType <- "CumulativeDefo"
+
+cumulative_HAiFLO_long <- cumulative_HaiFLO %>%
+ pivot_longer(cols = starts_with("Cumulative"), names_to="Year", values_to="value")
+
+#ran the exact same line twice to get the string I wanted
+cumulative_HAiFLO_long$Year <- (gsub("^.*?_", "", cumulative_HAiFLO_long$Year))
+cumulative_HAiFLO_long$Year <- (gsub("^.*?_", "", cumulative_HAiFLO_long$Year))
+
+cumulative_HAiFLO_long <- cumulative_HAiFLO_long[, c(1,3,2,4)]
+
+cumulative_HAiFLO_long <- cumulative_HAiFLO_long %>%
+  rename(year = Year)
+
+cumulative_HAiFLO_long<- cumulative_HAiFLO_long %>%
+  dplyr::select(1,2,4) %>%
+  rename(cdefo = value)
+
+#saveRDS(cumulative_HAiFLO_long, file = "cumulative_HAiFLO_long.RDS")
+
+#join cdefo and ydefo into one file
+
+HAIFLO <- HAIFLO %>%
+  left_join(cumulative_HAiFLO_long, by = c("site", "year"))
+
+#saveRDS(HAIFLO, file = "HAIFLO.RDS")
+
+#pull in mortality data
+#note that it is NA in 2019 
+watersheds_mortality_statistics <- readRDS("~/GitHub/SBWD_master/data/watersheds_mortality_statistics.RDS")
+
+mortality <- watersheds_mortality_statistics %>%
+  filter(hydroweighting == "HAiFLO") %>%
+  filter(year %in% c("2020", "2021")) %>%
+  dplyr::select(1,3,6) %>%
+  dplyr::rename(Mortality = value)
+```
+
+## Stream Habitat Data
+
+- using full season SUVA and flow and incubation period for temp (see methods)
+- SUVA shown here, flow and temp are in the SI code file
+
+## SUVA (full season)
+
+```{r SUVA data, results = 'hide', fig.width=12, fig.height=14}
+streams <- readRDS("~/GitHub/SBWD_master/data/streams.RDS")
+
+# create a summary file with averages of DOM per site per year
+DOM_data <- streams %>%
+        dplyr::select(c(1:12, 14, 17))
+
+DOM_data$year <- as.factor(DOM_data$year)
+
+DOM_data$site <- DOM_data$site %>%    
+        factor(levels = c("U01", "U02", "U03", "C04", "C05", "C06", "C07", "L08", "L09", "L10", "L11", "L12"))
+#create proper SUVA column including dividing by log(10)
+DOM_data <- DOM_data %>%
+        mutate (SUVA = (a254/2.302585)/DOC.mgL)
+
+#restrict to 2019-2021
+DOM_data <- DOM_data %>%
+  filter(year %in% c("2019", "2020", "2021"))
+
+#SUVA data
+SUVA_data <- DOM_data %>%
+dplyr::select(site, year, date.collected, SUVA)
+##remove one outlier - CO4, 2019, SUVA = 24
+SUVA_data <- SUVA_data[-c(76), ]
+
+#mhix data
+mhix_data <- DOM_data %>%
+       dplyr::select(site, year, date.collected, mhix)
+
+mhix_summary <- mhix_data %>%
+  group_by(site, year) %>%
+  summarize(mean=mean(mhix), N=length(mhix), sd=sd(mhix), se = sd/sqrt(N))
+
+#fi data
+fi_data <- DOM_data %>%
+        dplyr::select(site, year, date.collected, fi)
+
+fi_summary <- fi_data %>%
+  group_by(site, year) %>%
+  summarize(mean=mean(fi), N=length(fi), sd=sd(fi), se = sd/sqrt(N))
+
+##bix
+bix_data <- DOM_data %>%
+        dplyr::select(site, year, date.collected, bix)
+#remove outlier
+bix_data <- bix_data[-c(51), ]
+bix_summary <- bix_data %>%
+  group_by(site, year) %>%
+  summarize(mean=mean(bix), N=length(bix), sd=sd(bix), se = sd/sqrt(N))
+
+#take averages per site per year
+SUVA_summary <- SUVA_data %>%
+  group_by(site, year) %>%
+  summarize(mean_SUVA=mean(SUVA))
+
+mhix_summary <- mhix_summary %>%
+  dplyr::rename(mhix=mean) %>%
+  dplyr::select(-4,-5,-6)
+
+fi_summary <- fi_summary %>%
+  dplyr::rename(fi=mean) %>%
+  dplyr::select(-4,-5,-6)
+
+bix_summary <- bix_summary %>%
+  dplyr::rename(bix=mean) %>%
+  dplyr::select(-4,-5,-6)
+
+#combine all averages into one file
+DOM_data_summary <- mhix_summary %>%
+  inner_join(fi_summary, by = c("site", "year"))
+
+DOM_data_summary <- DOM_data_summary %>%
+  inner_join(bix_summary, by = c("site", "year"))
+
+DOM_data_summary <- DOM_data_summary %>%
+  inner_join(SUVA_summary, by = c("site", "year"))
+
+#saveRDS(DOM_data_summary, file="DOM_data_summary.RDS")
+
+SUVA <- DOM_data_summary %>%
+  dplyr::select(1,2,6)
+
+SUVA$site <- as.character(SUVA$site)
+
+#add regions
+SUVA <- SUVA %>%
+  mutate(Region = case_when(
+    startsWith(site, "L") ~ "Lower",
+    startsWith(site, "C") ~ "Central",
+    startsWith(site, "U") ~ "Upper"
+    ))
+
+#pull in landscape variables
+
+library(readxl)
+watersheds <- read_excel(path="~/GitHub/SpruceBudworm_StreamMicrobiome/watersheds.xlsx" ,
+                  sheet="watersheds",
+                  col_names= TRUE)
+
+mydata <- SUVA %>%
+        inner_join(HAIFLO, by = c("site", "year"))
+
+watersheds <- watersheds %>%
+        rename(site = Site)
+
+mydata <- mydata %>%
+        inner_join(watersheds, by = c("site"))
+
+#pull in mortality data
+mydata <- mydata %>%
+  left_join(mortality, by = c("site", "year"))
+#note that mortality is NA in 2019 (assuming 0) so change NAs to 0
+mydata <- mydata %>%
+  replace_na(list(Mortality = 0))
+
+#plot correlations
+
+library(ragg)
+p5 <- ggscatter(mydata, x = "cdefo", y = "mean_SUVA", color = "year", shape = "Region", size = 5,
+          add = "reg.line", conf.int = TRUE,
+                  show.legend.text = FALSE, show.legend = FALSE) + stat_cor(p.accuracy = 0.001, r.accuracy = 0.01, aes(size =5, label = paste(..r.label.., ..p.label.., sep = "~`,`~")), show.legend = FALSE, size = 5) + scale_color_brewer(palette = "Dark2") + scale_fill_brewer(palette = "Dark2", guide = "none") + facet_wrap(~year) +xlab("Cumulative Defoliation") + ylab(bquote('SUVA ('*mg~L^-1~m^-1*')')) + theme_bw(base_size = 16) + theme(legend.position = "bottom", panel.grid.major = element_blank(),panel.grid.minor = element_blank(), #legend.margin=margin(-3, 0, 0, 0),
+legend.spacing.y = unit(0.05, 'cm'), legend.key.size = unit(0.2, 'cm')) +
+#legend.box.background = element_rect(color="black", size=0.5))
+  #legend.box.margin = margin(116, 6, 6, 6)) 
+  scale_shape_discrete(breaks=c('Lower', 'Central', 'Upper'), guide = guide_legend(byrow = TRUE)) + labs(shape = "Watershed Cluster")
+
+#SUVA HP
+mydata19 <- mydata %>%
+        filter(year=="2019")
+
+mydata20 <- mydata %>%
+        filter(year=="2020")
+
+mydata21 <- mydata %>%
+        filter(year=="2021")
+
+#just spfir, catch size, wetland area
+HPmod_land19 <- rdacca.hp(mydata19$mean_SUVA, mydata19[,c("Mean_Elevation", "cdefo", "Catchment_Area_km2", "Wetland_PercentCover", "SpFir_Percent")], var.part = TRUE)
+#plot.rdaccahp(HPmod_land19)
+HPmod_land19
+
+HPmod_land20 <- rdacca.hp(mydata20$mean_SUVA, mydata20[,c("Mean_Elevation", "cdefo", "Catchment_Area_km2", "Wetland_PercentCover", "SpFir_Percent")], var.part = TRUE)
+#plot(HPmod_land20, plot.perc = TRUE)
+HPmod_land20
+
+HPmod_land21<- rdacca.hp(mydata21$mean_SUVA, mydata21[,c("Mean_Elevation", "cdefo", "Catchment_Area_km2", "Wetland_PercentCover", "SpFir_Percent")], var.part = TRUE)
+#plot(HPmod_land21, plot.perc = TRUE)
+HPmod_land21
+
+#plot total and then put unique and shared into a table
+
+HP_vals_c21 <- (as.data.frame(HPmod_land21[[4]]))
+HP_vals_c21$parameter <- row.names(HP_vals_c21)  
+
+HP_vals_c21 <- HP_vals_c21 %>%
+dplyr::select(4,5)
+
+HP_vals_c21_long <- HP_vals_c21 
+       # %>% pivot_longer(
+             #   cols = 1:2,
+               # names_to = c("condition"),
+               # values_to = "value")
+
+HP_vals_c21_long$year <- "2021"
+ 
+
+#2019
+HP_vals_c19 <- (as.data.frame(HPmod_land19[[4]]))
+HP_vals_c19$parameter <- row.names(HP_vals_c19)  
+
+HP_vals_c19 <- HP_vals_c19 %>%
+dplyr::select(4,5)
+
+HP_vals_c19_long <- HP_vals_c19 
+#%>% 
+        #pivot_longer(
+              #  cols = 1:2,
+              #  names_to = c("condition"),
+              #  values_to = "value")
+
+HP_vals_c19_long$year <- "2019"
+#2020
+HP_vals_c20 <- (as.data.frame(HPmod_land20[[4]]))
+HP_vals_c20$parameter <- row.names(HP_vals_c20)  
+
+HP_vals_c20 <- HP_vals_c20 %>%
+dplyr::select(4,5)
+
+HP_vals_c20_long <- HP_vals_c20 
+#%>% 
+      #  pivot_longer(
+            #    cols = 1:2,
+             #   names_to = c("condition"),
+             #   values_to = "value")
+HP_vals_c20_long$year <- "2020"
+                                    
+#join years together
+HP_vals_long <- rbind(HP_vals_c19_long, HP_vals_c20_long, HP_vals_c21_long)
+
+#HP_vals_long <- HP_vals_long %>%
+  #dplyr::rename(Condition = condition)
+
+HP_vals_long <- HP_vals_long %>%
+dplyr::rename(Indiv.perc = "I.perc(%)")
+#HP_vals_long$Condition <- as.factor(HP_vals_long$Condition)
+
+#need to change order of the factor so that individual is first, then shared I think
+HP_vals_long$parameter <- HP_vals_long$parameter %>%
+factor(levels = c("cdefo", "Mean_Elevation", "SpFir_Percent", "Catchment_Area_km2", "Wetland_PercentCover"))
+
+#legend.title = element_text(size=4),legend.text = element_text(size=4)
+p2 <- ggplot(HP_vals_long, aes(y=Indiv.perc, x=parameter, fill = parameter)) + 
+    geom_bar(stat="identity") + facet_wrap(~year) +   
+  scale_x_discrete(labels=c("Cumulative Defoliation", "Elevation", "% Spruce-Fir", "Catchment Area", "% Wetland" )) + 
+  theme_bw(base_size = 16) +
+ xlab("Landscape Metric") + ylab(expression(atop("% Individual Contribution",paste("to SUVA R " ^2)))) +
+#scale_fill_discrete(labels=c('Total Variance', 'Unique Variance')) 
+  theme(panel.border = element_rect(color="black", fill=NA), axis.text.x = element_text(angle = 65, hjust = 1, vjust=1), legend.position = "none", panel.grid.major = element_blank(),
+panel.grid.minor = element_blank()) + scale_fill_brewer(palette="Dark2")
+
+ann_text <- data.frame(parameter = "SpFir_Percent",Indiv.perc = 70 ,lab = c("R^2==0.57","R^2==0.42", "R^2==0.78"),
+                       year= c("2019","2020","2021"))
+
+p3 <- p2 + geom_text(data = ann_text, size = 5, nudge_x = 0.5, aes(x = parameter, y = Indiv.perc, label = lab), parse = TRUE)
+
+#final SUVA plot
+SUVAplot <- ggarrange(p5, p3,
+          labels = c("a", "b"),
+          font.label=list(size = 22, color = "black", face = "bold"),
+          ncol = 1, nrow = 2)
+
+#export for journal
+#ggsave(
+#  filename = "SUVA.png",
+ # plot = SUVAplot,
+#  path = NULL,
+#  width = 8.5,
+# height = 12,
+#units = "cm",
+#  dpi = 300,
+#scaling = 0.38
+#)
+```
+
+
+# Stream Microbiome Structure 
+- used phyloseq to assess microbiome
+- microbiome data files are pulled from GLFC-WET/SBWD_master/tree/v2.0/data rather than the main branch because this paper only uses 2019-2021 data and the main contains additional years of data in the raw files
+
+```{r}
+### Bacteria (16S)
+#pull from VERSION 2.0 of SBWD_data repo
+#will add the file directly to this repository as well once paper is accepted
+#saved a local version for now
+lp_16s <- readRDS("~/SBW Data/old SBWD/SBWD_master-main_15Aug2022/data/lp_16s.RDS")
+```
+
+```{r ESV table}
+#need to remove all the extra columns so it is just ESVseq and counts per sample ID
+lp_16s_ESVtable <- dplyr::select(lp_16s, -c(1,3:21))
+
+#need to make the ESVseq the row names instead of the first row
+n1 <- lp_16s_ESVtable$ESVseq
+
+lp_16s_ESVtable <- lp_16s_ESVtable[,-1]
+rownames(lp_16s_ESVtable) <- n1
+
+ESVtable_16s <- as.matrix(lp_16s_ESVtable)
+
+#saveRDS(ESVtable_16s, file = "ESVtable_16s.RDS")
+```
+
+```{r taxa table}
+#taxa table you want to keep ESV sequences again and then the taxonomic classifications
+lp_16s_taxa <- dplyr::select(lp_16s, c(2, 4, 7, 10, 13, 16, 19))
+
+n2 <- lp_16s_taxa$ESVseq
+
+lp_16s_taxa <- lp_16s_taxa[,-1]
+rownames(lp_16s_taxa) <- n2
+
+ESV_16s_taxa <- as.matrix(lp_16s_taxa)
+#saveRDS(ESV_16s_taxa, file = "ESV_16s_taxa.RDS")
+```
+
+
+```{r metadata table}
+# transpose matrix so you can extract the sample ID
+lp_16s_ESVtable_t <- as.data.frame(t(lp_16s_ESVtable))
+
+#save the sample ID into their own rds so you have them for later
+sample_id_16s <- lp_16s_ESVtable_t                                      
+sample_id_16s  <- tibble::rownames_to_column(sample_id_16s, "Sample") 
+sample_id_16s <- dplyr::select(sample_id_16s, 1)
+
+metadata <- separate(sample_id_16s, col=Sample, into=c('site', 'rep', 'year'), sep='_')
+
+metadata_lp_16s <- cbind(sample_id_16s, metadata)
+
+# first remember the names
+n3 <- metadata_lp_16s$Sample
+
+# move names to row headings
+metadata_lp_16s <- metadata_lp_16s[,-1]
+rownames(metadata_lp_16s) <- n3
+
+#add all metadata
+
+HAIFLO <- HAIFLO  %>%
+  mutate(Region = case_when(
+    startsWith(site, "L") ~ "Lower",
+    startsWith(site, "C") ~ "Central",
+    startsWith(site, "U") ~ "Upper"
+    ))
+
+HAIFLO <- HAIFLO  %>%
+  left_join(mortality, by = c("site", "year")) %>%
+  replace_na(list(Mortality_vals = 0))
+
+#prep water chemistry data
+#waterchem_means_wide <- readRDS("~/SBWD_data_analysis/EditedData/StreamHabitat/waterchem_means_wide.RDS")
+
+waterchem <- streams %>%
+        dplyr::select(c(1,2, 14:43))
+
+waterchem$year <- as.factor(waterchem$year)
+
+waterchem$site <- waterchem$site %>%    
+        factor(levels = c("U01", "U02", "U03", "C04", "C05", "C06", "C07", "L08", "L09", "L10", "L11", "L12"))
+
+waterchem <- waterchem %>%
+  filter(year %in% c("2019", "2020", "2021"))
+
+#checked the proportion of values above the detection limit (limit of quantification)
+# if 50 to 60% of the values were below the DL, they were dropped from analyses
+#Al, Fe, NH4, SRP, Mn, Ni, Cd, and Pb did not meet cutoff and were removed
+# replaced any remaining values below the DL with 1/2DL
+
+waterchem <- waterchem %>%
+  dplyr::select(-"Al.mgL", -"Fe.mgL", -"NH4.mgL", -"SRP.mgL", -"Mn.mgL", -"Ni.mgL", -"Cd.mgL", -"Pb.mgL")
+
+library(readr)
+LOQ_waterchem <- read_csv("~/GitHub/SpruceBudworm_StreamMicrobiome/LOQ_waterchem.csv")
+
+#replace anything below LOQ with 1/2 LOQ
+waterchem_long <- waterchem %>% 
+ pivot_longer(cols= (where(is.numeric)), names_to="parameter") %>%
+  full_join(LOQ_waterchem,by="parameter") %>%
+ mutate(across(value, ~ifelse(.<LOQ, replace_value, .))) %>% 
+ dplyr::select(-c(LOQ,replace_value)) 
+
+#remove blank rows
+waterchem_long <- waterchem_long[-c(7057:7066), ]
+
+#checked for outliers using boxplots
+#Outlier at L10 on 2021-06-13 for all 4 algal biomass parameters was removed
+library(naniar)
+waterchem_long <- waterchem_long %>%
+  replace_with_na(replace = list(value = c(23.4248000, 12.088400, 7.91560000, 3.420800)))
+
+
+waterchem_long1 <- waterchem_long %>%
+  replace_with_na(replace = list(value = 3.420800))
+
+# need to edit here to pull in from raw github data not intermediate
+
+flow_fullseason_means <- readRDS("~/SBWD_data_analysis/EditedData/StreamHabitat/flow_fullseason_means.RDS")
+
+# need to edit here to pull in from raw github data not intermediate
+
+temp_levellogger_summary <- readRDS("~/SBWD_data_analysis/EditedData/StreamHabitat/temp_levellogger_summary.RDS")
+
+metadata_lp_16s <- metadata_lp_16s %>%
+    inner_join(HAIFLO, by = c("site", "year"))
+
+metadata_lp_16s <- metadata_lp_16s %>%
+    inner_join(waterchem_means_wide, by = c("site", "year")) 
+
+metadata_lp_16s <- metadata_lp_16s %>%
+    inner_join(temp_levellogger_summary, by = c("site", "year"))
+
+metadata_lp_16s <- metadata_lp_16s %>%
+ inner_join(DOM_data_summary, by = c("site", "year"))
+
+metadata_lp_16s <- metadata_lp_16s %>%
+ inner_join(flow_fullseason_means, by = c("site", "year"))
+
+rownames(metadata_lp_16s) <- n3
+
+
+#2019 metadata
+metadata_lp_16s$site <- metadata_lp_16s$site %>%    
+        factor(levels = c("L09", "L10", "L12", "L08", "L11", "U03", "C07", "C06", "U01", "C04", "C05", "U02"))
+metadata_lp_16s_2019 <- metadata_lp_16s
+
+#2020 metadata
+metadata_lp_16s$site <- metadata_lp_16s$site %>%    
+        factor(levels = c("L10", "L08", "L09", "L12", "L11", "C06", "C07", "C05", "U03", "C04", "U01", "U02"))
+metadata_lp_16s_2020 <- metadata_lp_16s
+
+#2021 metadata
+metadata_lp_16s$site <- metadata_lp_16s$site %>%    
+        factor(levels = c("U02", "L10", "L08", "L12", "U03", "L09", "C06", "L11", "C04", "C05", "C07", "U01"))
+metadata_lp_16s_2021 <- metadata_lp_16s
+```
+
+```{r create phyloseq objects}
+#create one phyloseq for each year
+ESV_table = otu_table(ESVtable_16s, taxa_are_rows = TRUE)
+Taxa_table = tax_table(ESV_16s_taxa)
+
+
+#all years together
+phy_obj_16s_allyears <- phyloseq(ESV_table, 
+               sample_data(metadata_lp_16s), 
+               Taxa_table)
+#saveRDS(phy_obj_16s_allyears, file = "phy_obj_16s_allyears.RDS")
+
+#2019
+phy_obj_16s_2019order <- phyloseq(ESV_table, 
+               sample_data(metadata_lp_16s_2019), 
+               Taxa_table)
+phy_obj_16s_2019_1 <- subset_samples(phy_obj_16s_2019order, year == "2019")
+phy_obj_16s_2019 <- prune_taxa(taxa_sums(phy_obj_16s_2019_1)>0, phy_obj_16s_2019_1)
+#saveRDS(phy_obj_16s_2019, file = "phy_obj_16s_2019.RDS")
+#2020
+phy_obj_16s_2020order <- phyloseq(ESV_table, 
+               sample_data(metadata_lp_16s_2020), 
+               Taxa_table)
+phy_obj_16s_2020_1 <- subset_samples(phy_obj_16s_2020order, year == "2020")
+phy_obj_16s_2020 <- prune_taxa(taxa_sums(phy_obj_16s_2020_1)>0, phy_obj_16s_2020_1)
+#saveRDS(phy_obj_16s_2020, file = "phy_obj_16s_2020.RDS")
+#2021
+phy_obj_16s_2021order <- phyloseq(ESV_table, 
+               sample_data(metadata_lp_16s_2021), 
+               Taxa_table)
+phy_obj_16s_2021_1 <- subset_samples(phy_obj_16s_2021order, year == "2021")
+phy_obj_16s_2021 <- prune_taxa(taxa_sums(phy_obj_16s_2021_1)>0, phy_obj_16s_2021_1)
+#saveRDS(phy_obj_16s_2021, file = "phy_obj_16s_2021.RDS")
+```
+
+
+```{r load its}
+### Phyloseqs - Fungi (ITS)
+#same as 16S above. this needs to downloaded from VERSION 2.0 branch of the SBWD_master repository
+#I wll add the appropriate file to this repository upon acceptance, but using a local copy for now
+lp_its <- readRDS("~/SBW Data/old SBWD/SBWD_master-main_28Oct2022/SBWD_master-main/data/lp_its.RDS")
+```
+
+```{r ITS ESV table}
+#need to remove all the extra columns so it is just ESV names and counts per sample ID
+#other times I have done ESV seqs as columns but for ITS we need to do ESV names as we have duplicate seqs
+lp_its_ESVtable <- dplyr::select(lp_its, -c(2:26))
+
+#need to make the ESVseq the row names instead of the first row
+n1 <- lp_its_ESVtable$ESV
+
+lp_its_ESVtable <- lp_its_ESVtable[,-1]
+rownames(lp_its_ESVtable) <- n1
+
+ESVtable_its <- as.matrix(lp_its_ESVtable)
+
+#saveRDS(ESVtable_its, file = "ESVtable_its.RDS")
+```
+
+```{r ITS taxa table}
+#taxa table you want to keep ESV sequences again and then the taxonomic classifications
+lp_its_taxa <- dplyr::select(lp_its, c(1, 6, 9, 12, 15, 18, 21, 24))
+
+n2 <- lp_its_taxa$ESV
+
+lp_its_taxa <- lp_its_taxa[,-1]
+rownames(lp_its_taxa) <- n2
+
+ESV_its_taxa <- as.matrix(lp_its_taxa)
+#saveRDS(ESV_its_taxa, file = "ESV_its_taxa.RDS")
+```
+
+```{r ITS metadata table, echo = FALSE}
+# transpose matrix so you can extract the sample ID
+lp_its_ESVtable_t <- as.data.frame(t(lp_its_ESVtable))
+
+#save the sample ID into their own rds so you have them for later
+sample_id_its <- lp_its_ESVtable_t                                      
+sample_id_its  <- tibble::rownames_to_column(sample_id_its, "Sample") 
+sample_id_its <- dplyr::select(sample_id_its, 1)
+
+metadata <- separate(sample_id_its, col=Sample, into=c('site', 'rep', 'year'), sep='_')
+
+metadata_lp_its <- cbind(sample_id_its, metadata)
+
+# first remember the names
+n3 <- metadata_lp_its$Sample
+
+# move names to row headings
+metadata_lp_its <- metadata_lp_its[,-1]
+rownames(metadata_lp_its) <- n3
+
+#add all metadata
+
+waterchem_means_wide <- readRDS("~/SBWD_data_analysis/EditedData/StreamHabitat/waterchem_means_wide.RDS")
+
+flow_fullseason_means <- readRDS("~/SBWD_data_analysis/EditedData/StreamHabitat/flow_fullseason_means.RDS")
+
+temp_levellogger_summary <- readRDS("~/SBWD_data_analysis/EditedData/StreamHabitat/temp_levellogger_summary.RDS")
+
+metadata_lp_its <- metadata_lp_its %>%
+    inner_join(HAIFLO, by = c("site", "year"))
+
+metadata_lp_its <- metadata_lp_its %>%
+    inner_join(waterchem_means_wide, by = c("site", "year")) 
+
+metadata_lp_its <- metadata_lp_its %>%
+    inner_join(temp_levellogger_summary, by = c("site", "year"))
+
+metadata_lp_its <- metadata_lp_its %>%
+ inner_join(DOM_data_summary, by = c("site", "year"))
+
+metadata_lp_its <- metadata_lp_its %>%
+ inner_join(Mortality_cats, by = c("site", "year"))
+
+metadata_lp_its <- metadata_lp_its %>%
+ inner_join(flow_fullseason_means, by = c("site", "year"))
+
+rownames(metadata_lp_its) <- n3
+
+#saveRDS(metadata_lp_its, file = "metadata_lp_its.RDS")
+#reorder sites
+
+#2019 metadata
+metadata_lp_its$site <- metadata_lp_its$site %>%    
+        factor(levels = c("L09", "L10", "L12", "L08", "L11", "U03", "C07", "C06", "U01", "C04", "C05", "U02"))
+metadata_lp_its_2019 <- metadata_lp_its
+#saveRDS(metadata_lp_its_2019, file = "metadata_lp_its_2019order.RDS")
+
+#2020 metadata
+metadata_lp_its$site <- metadata_lp_its$site %>%    
+        factor(levels = c("L10", "L08", "L09", "L12", "L11", "C06", "C07", "C05", "U03", "C04", "U01", "U02"))
+metadata_lp_its_2020 <- metadata_lp_its
+#saveRDS(metadata_lp_its_2020, file = "metadata_lp_its_2020order.RDS")
+
+
+#2021 metadata
+metadata_lp_its$site <- metadata_lp_its$site %>%    
+        factor(levels = c("U02", "L10", "L08", "L12", "U03", "L09", "C06", "L11", "C04", "C05", "C07", "U01"))
+metadata_lp_its_2021 <- metadata_lp_its
+#saveRDS(metadata_lp_its_2021, file = "metadata_lp_its_2021order.RDS")
+```
+
+```{r ITS create phyloseq objects, echo = FALSE}
+#create one phyloseq for each year
+ESV_table = otu_table(ESVtable_its, taxa_are_rows = TRUE)
+Taxa_table = tax_table(ESV_its_taxa)
+
+#all years
+phy_obj_its_allyears <- phyloseq(ESV_table, 
+               sample_data(metadata_lp_its), 
+               Taxa_table)
+#saveRDS(phy_obj_its_allyears, file = "phy_obj_its_allyears.RDS")
+
+#2019
+
+phy_obj_its_2019order <- phyloseq(ESV_table, 
+               sample_data(metadata_lp_its_2019), 
+               Taxa_table)
+phy_obj_its_2019_1 <- subset_samples(phy_obj_its_2019order, year == "2019")
+phy_obj_its_2019 <- prune_taxa(taxa_sums(phy_obj_its_2019_1)>0, phy_obj_its_2019_1)
+#2020
+phy_obj_its_2020order <- phyloseq(ESV_table, 
+               sample_data(metadata_lp_its_2020), 
+               Taxa_table)
+phy_obj_its_2020_1 <- subset_samples(phy_obj_its_2020order, year == "2020")
+phy_obj_its_2020 <- prune_taxa(taxa_sums(phy_obj_its_2020_1)>0, phy_obj_its_2020_1)
+#2021
+phy_obj_its_2021order <- phyloseq(ESV_table, 
+               sample_data(metadata_lp_its_2021), 
+               Taxa_table)
+phy_obj_its_2021_1 <- subset_samples(phy_obj_its_2021order, year == "2021")
+phy_obj_its_2021 <- prune_taxa(taxa_sums(phy_obj_its_2021_1)>0, phy_obj_its_2021_1)
+
+#saveRDS(phy_obj_its_2019, file = "phy_obj_its_2019.RDS")
+#saveRDS(phy_obj_its_2020, file = "phy_obj_its_2020.RDS")
+#saveRDS(phy_obj_its_2021, file = "phy_obj_its_2021.RDS")
+
+```
+
+
+## Beta Diversity - CoDA PCA
+
+```{r metadata filter}
+metadata_16s_2019 <- metadata_lp_16s %>%
+  filter(year == "2019")
+
+metadata_16s_2020 <- metadata_lp_16s %>%
+  filter(year == "2020")
+
+metadata_16s_2021 <- metadata_lp_16s %>%
+  filter(year == "2021")
+
+metadata_its_2019 <- metadata_lp_its %>%
+  filter(year == "2019")
+
+metadata_its_2020 <- metadata_lp_its %>%
+  filter(year == "2020")
+
+metadata_its_2021 <- metadata_lp_its %>%
+  filter(year == "2021")
+```
+
+## CoDA PCA Bacteria with OrdiSurf
+
+```{r coda pca}
+# all years together
+ps_clr <- microbiome::transform(phy_obj_16s_allyears, "clr")        
+coda_pca <- phyloseq::ordinate(ps_clr, "RDA")
+
+ps_clr_2019 <- microbiome::transform(phy_obj_16s_2019, "clr")        
+coda_pca_2019 <- phyloseq::ordinate(ps_clr_2019, "RDA")
+
+ps_clr_2020 <- microbiome::transform(phy_obj_16s_2020, "clr")        
+coda_pca_2020 <- phyloseq::ordinate(ps_clr_2020, "RDA")
+
+ps_clr_2021 <- microbiome::transform(phy_obj_16s_2021, "clr")        
+coda_pca_2021 <- phyloseq::ordinate(ps_clr_2021, "RDA")
+
+p1 <- plot_ordination(ps_clr, coda_pca, color = "year") 
+pp <- p1 + geom_point(aes(fill = year), colour = "black", pch=21, size =5) + scale_fill_viridis(discrete = TRUE, direction = -1) +  labs(title = "All Years") + theme(legend.position = "none") 
+```
+
+```{r, fig.width = 12}
+#install.packages("ggordiplots")
+library("ggordiplots")
+
+#2019
+ordi_2019 <- gg_ordisurf(coda_pca_2019, env.var = metadata_16s_2019$cdefo)
+my.plot <- ordi_2019$plot
+names(ordi_2019)
+
+ord.data <- ordi_2019$df_ord
+ord.data$site <- metadata_16s_2019$site
+ord.data$rep <- metadata_16s_2019$rep
+ord.data$year <- metadata_16s_2019$year
+ord.data$cdefo <- metadata_16s_2019$cdefo
+ord.data$Region <- metadata_16s_2019$Region
+ord.data$Mortality <- metadata_16s_2019$Mortality
+
+surf.data <- ordi_2019$df_surf
+
+p1 <- ggplot() + geom_point(data= ord.data, aes(x=x, y=y, fill = cdefo, shape = Mortality, size=3), color = "black") + scale_fill_viridis(discrete = FALSE, direction = -1, limits = c(0, 13))+ scale_shape_manual(values =c("None" = 21)) + stat_contour(data = surf.data, aes(x=x, y=y, z=z, color = ..level..), lwd = 1) + coord_fixed(ratio=1) + scale_color_viridis(direction = -1, limits = c(0, 13),guide="none") + guides(shape=guide_legend(override.aes = list(size = 3), title="Top Mortality", order = 2), fill = guide_colorbar(title = "Cumulative Defoliation", order = 1)) + scale_size(guide="none") + labs(title = "Bacteria 2019") + theme_bw(base_size = 22) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.position = "none") + xlab("PC1 [12.6%]") + ylab("PC2 [9.6%]") + scale_x_continuous(limits=c(-6.5, 6.5), breaks = c(-6,-3, 0, 3, 6)) + scale_y_continuous(limits=c(-5, 9), breaks = c(-3,0, 3, 6, 9))  + annotate("text", x = 0, y = 8.75, label = "paste(italic(R) ^ 2, \" = 0.07\")", size = 6, parse = TRUE)
+
+#2020
+ordi_2020 <- gg_ordisurf(coda_pca_2020, env.var = metadata_16s_2020$cdefo)
+my.plot <- ordi_2020$plot
+names(ordi_2020)
+
+ord.data <- ordi_2020$df_ord
+ord.data$site <- metadata_16s_2020$site
+ord.data$rep <- metadata_16s_2020$rep
+ord.data$year <- metadata_16s_2020$year
+ord.data$cdefo <- metadata_16s_2020$cdefo
+ord.data$Region <- metadata_16s_2020$Region
+ord.data$Mortality <- metadata_16s_2020$Mortality
+
+surf.data <- ordi_2020$df_surf
+
+p2 <- ggplot() + geom_point(data= ord.data, aes(x=x, y=y, fill = cdefo, shape = Mortality, size=3), color = "black") + scale_fill_viridis(discrete = FALSE, direction = -1, limits = c(0, 13)) + scale_shape_manual(values = c("None" = 21, "Moderate" = 23)) + stat_contour(data = surf.data, aes(x=x, y=y, z=z, color = ..level..), lwd = 1) + coord_fixed(ratio=1) + scale_color_viridis(direction = -1, limits = c(0, 13),guide="none") + guides(shape=guide_legend(override.aes = list(size = 3), title="Top Mortality", order = 2), fill = guide_colorbar(title = "Cumulative Defoliation", order = 1)) + scale_size(guide="none") + labs(title = "Bacteria 2020") + theme_bw(base_size = 22) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.position = "none") + xlab("PC1 [13.3%]") + ylab("PC2 [8.5%]") + scale_x_continuous(limits=c(-3, 9), breaks = c(-3, 0, 3, 6, 9))  + annotate("text", x = 3.5, y = 5.5, label = "paste(italic(R) ^ 2, \" = 0.05\")", size = 6, parse = TRUE)
+
+#2021
+ordi_2021 <- gg_ordisurf(coda_pca_2021, env.var = metadata_16s_2021$cdefo)
+my.plot <- ordi_2021$plot
+names(ordi_2021)
+
+ord.data <- ordi_2021$df_ord
+ord.data$site <- metadata_16s_2021$site
+ord.data$rep <- metadata_16s_2021$rep
+ord.data$year <- metadata_16s_2021$year
+ord.data$cdefo <- metadata_16s_2021$cdefo
+ord.data$Region <- metadata_16s_2021$Region
+ord.data$Mortality <- metadata_16s_2021$Mortality
+
+surf.data <- ordi_2021$df_surf
+
+p3 <- ggplot() + geom_point(data= ord.data, aes(x=x, y=y, fill = cdefo, shape = Mortality, size=3), color = "black") + scale_fill_viridis(discrete = FALSE, direction = -1, limits = c(0, 13)) + scale_shape_manual(values = c("None" = 21, "Low" = 24, "Moderate" = 23)) + stat_contour(data = surf.data, aes(x=x, y=y, z=z, color = ..level..), lwd = 1, show.legend = FALSE) + coord_fixed(ratio=1) + scale_color_viridis(direction = -1, limits = c(0, 13),guide="none") + guides(shape=guide_legend(override.aes = list(size = 3), title="Top Mortality", order = 2, nrow =3), fill = guide_colorbar(title = "Cumulative Defoliation", order = 1, barwidth = 13), color = guide_legend(nrow=2)) + scale_size(guide="none") +
+  labs(title = "Bacteria 2021") + theme_bw(base_size = 22) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.position = "bottom") + xlab("PC1 [14.9%]") + ylab("PC2 [13.7%]")+ scale_x_continuous(limits=c(-5.5, 4.5), breaks = c(-4,-2, 0, 2, 4)) + scale_y_continuous(limits=c(-4.5, 4.5), breaks = c(-4,-2, 0, 2, 4)) + annotate("text", x = 0, y = 4.5, label = "paste(italic(R) ^ 2, \" = 0.12\")", size = 6, parse = TRUE)
+
+```
+
+# Adonis on the bacteria ordinations
+
+```{r 16S adonis}
+#2019
+#Generate distance matrix
+dist_matrix_2019 <- phyloseq::distance(ps_clr_2019, method = "euclidean")
+# make a data frame from the sample_data
+sampledf_2019 <- data.frame(sample_data(ps_clr_2019))
+adonis2(dist_matrix_2019 ~ cdefo, data = sampledf_2019)
+
+#2020
+#Generate distance matrix
+dist_matrix_2020 <- phyloseq::distance(ps_clr_2020, method = "euclidean")
+# make a data frame from the sample_data
+sampledf_2020 <- data.frame(sample_data(ps_clr_2020))
+adonis2(dist_matrix_2020 ~ cdefo, data = sampledf_2020)
+
+#2021
+#Generate distance matrix
+dist_matrix_2021 <- phyloseq::distance(ps_clr_2021, method = "euclidean")
+# make a data frame from the sample_data
+sampledf_2021 <- data.frame(sample_data(ps_clr_2021))
+adonis2(dist_matrix_2021 ~ cdefo, data = sampledf_2021)
+```
+
+### CoDA PCA Fungi with Ordisurf
+
+```{r ITS coda PCA}
+#2019
+ps_clr_2019 <- microbiome::transform(phy_obj_its_2019, "clr")        
+coda_pca_2019 <- phyloseq::ordinate(ps_clr_2019, "RDA")
+
+#2020
+ps_clr_2020 <- microbiome::transform(phy_obj_its_2020, "clr")        
+coda_pca_2020 <- phyloseq::ordinate(ps_clr_2020, "RDA")
+
+#2021
+ps_clr_2021 <- microbiome::transform(phy_obj_its_2021, "clr")        
+coda_pca_2021 <- phyloseq::ordinate(ps_clr_2021, "RDA")
+
+# all years together
+ps_clr <- microbiome::transform(phy_obj_its_allyears, "clr")        
+coda_pca <- phyloseq::ordinate(ps_clr, "RDA")
+```
+
+```{r, fig.width = 12}
+#install.packages("ggordiplots")
+library("ggordiplots")
+
+#2019
+ordi_2019 <- gg_ordisurf(coda_pca_2019, env.var = metadata_its_2019$cdefo)
+my.plot <- ordi_2019$plot
+names(ordi_2019)
+
+ord.data <- ordi_2019$df_ord
+ord.data$site <- metadata_its_2019$site
+ord.data$rep <- metadata_its_2019$rep
+ord.data$year <- metadata_its_2019$year
+ord.data$cdefo <- metadata_its_2019$cdefo
+ord.data$Region <- metadata_its_2019$Region
+ord.data$Mortality <- metadata_its_2019$Mortality
+
+surf.data <- ordi_2019$df_surf
+
+p4 <- ggplot() + geom_point(data= ord.data, aes(x=x, y=y, fill = cdefo, shape = Mortality, size=3), color = "black") + scale_fill_viridis(discrete = FALSE, direction = -1, limits = c(0, 13))+ scale_shape_manual(values =c("None" = 21)) + stat_contour(data = surf.data, aes(x=x, y=y, z=z, color = ..level..), lwd = 1) + coord_fixed(ratio=1) + scale_color_viridis(direction = -1, limits = c(0, 13),guide="none") + guides(shape=guide_legend(override.aes = list(size = 3), title="Top Mortality", order = 2), fill = guide_colorbar(title = "Cumulative Defoliation", order = 1)) + scale_size(guide="none") + labs(title = "Fungi 2019") + theme_bw(base_size = 22) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.position = "none") + xlab("PC1 [6.9%]") + ylab("PC2 [7.5%]") + scale_x_continuous(limits=c(-5, 5)) + scale_y_continuous(limits=c(-6.5, 5), breaks = c(-5, -2.5, 0, 2.5, 5)) + annotate("text", x = 0, y = 5, label = "paste(italic(R) ^ 2, \" = 0.04\")", size = 6, parse = TRUE)
+
+#2020
+ordi_2020 <- gg_ordisurf(coda_pca_2020, env.var = metadata_its_2020$cdefo)
+my.plot <- ordi_2020$plot
+names(ordi_2020)
+
+ord.data <- ordi_2020$df_ord
+ord.data$site <- metadata_its_2020$site
+ord.data$rep <- metadata_its_2020$rep
+ord.data$year <- metadata_its_2020$year
+ord.data$cdefo <- metadata_its_2020$cdefo
+ord.data$Region <- metadata_its_2020$Region
+ord.data$Mortality <- metadata_its_2020$Mortality
+
+surf.data <- ordi_2020$df_surf
+
+p5 <- ggplot() + geom_point(data= ord.data, aes(x=x, y=y, fill = cdefo, shape = Mortality, size=3), color = "black") + scale_fill_viridis(discrete = FALSE, direction = -1, limits = c(0, 13)) + scale_shape_manual(values = c("None" = 21, "Moderate" = 23)) + stat_contour(data = surf.data, aes(x=x, y=y, z=z, color = ..level..), lwd = 1) + coord_fixed(ratio=1) + scale_color_viridis(direction = -1, limits = c(0, 13),guide="none") + guides(shape=guide_legend(override.aes = list(size = 3), title="Top Mortality", order = 2), fill = guide_colorbar(title = "Cumulative Defoliation", order = 1)) + scale_size(guide="none") + labs(title = "Fungi 2020") + theme_bw(base_size = 22) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.position = "none") + xlab("PC1 [17.5%]") + ylab("PC2 [5.8%]") + scale_x_continuous(limits=c(-6, 2))  + scale_y_continuous(limits=c(-4, 4), breaks = c(-4, -2, 0, 2, 4)) + annotate("text", x = -2, y = 4, label = "paste(italic(R) ^ 2, \" = 0.04\")", size = 6, parse = TRUE)
+
+#2021
+ordi_2021 <- gg_ordisurf(coda_pca_2021, env.var = metadata_its_2021$cdefo)
+my.plot <- ordi_2021$plot
+names(ordi_2021)
+
+ord.data <- ordi_2021$df_ord
+ord.data$site <- metadata_its_2021$site
+ord.data$rep <- metadata_its_2021$rep
+ord.data$year <- metadata_its_2021$year
+ord.data$cdefo <- metadata_its_2021$cdefo
+ord.data$Region <- metadata_its_2021$Region
+ord.data$Mortality <- metadata_its_2021$Mortality
+
+surf.data <- ordi_2021$df_surf
+
+p6 <- ggplot() + geom_point(data= ord.data, aes(x=x, y=y, fill = cdefo, shape = Mortality, size=3), color = "black") + scale_fill_viridis(discrete = FALSE, direction = -1, limits = c(0, 13)) + scale_shape_manual(values = c("None" = 21, "Low" = 24, "Moderate" = 23)) + stat_contour(data = surf.data, aes(x=x, y=y, z=z, color = ..level..), lwd = 1) + coord_fixed(ratio=1) + scale_color_viridis(direction = -1, limits = c(0, 13),guide="none") + guides(shape=guide_legend(override.aes = list(size = 3), title="Top Mortality", order = 2), fill = guide_colorbar(title = "Cumulative Defoliation", order = 1)) + scale_size(guide="none") + labs(title = "Fungi 2021") + theme_bw(base_size = 22) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.position = "none") + xlab("PC1 [14.2%]") + ylab("PC2 [7.3%]") + scale_x_continuous(limits=c(-4, 4)) + annotate("text", x = -2.5, y = 3, label = "paste(italic(R) ^ 2, \" = 0.08\")", size = 6, parse = TRUE)
+```
+# Final Combined ordisurf plot
+
+```{r}
+final <- ggarrange(p1, p4, p2, p5, p3, p6,
+        labels = c("a", "b", "c", "d", "e", "f"),
+         font.label=list(size = 24, color = "black", face = "bold"),
+     common.legend = TRUE,
+         legend = "bottom",
+          legend.grob = get_legend(p3),
+          ncol = 2, nrow = 3,
+        align = "hv") 
+final
+
+ggsave(
+  filename = "ordi_microbes_r2.png",
+  plot = final,
+  path = NULL,
+  width = 8.5,
+ height = 12,
+units = "cm",
+  dpi = 300,
+bg = "white",
+scaling = .25, 
+)
+```
+
+### adonis on the fungi ordinations
+
+```{r ITS adonis, eval = FALSE}
+#test for significant differences in years
+#Generate distance matrix
+dist_matrix <- phyloseq::distance(ps_clr, method = "euclidean")
+# make a data frame from the sample_data
+sampledf <- data.frame(sample_data(ps_clr))
+adonis2(dist_matrix ~ year, data = sampledf)
+
+#2019
+#Generate distance matrix
+dist_matrix_2019 <- phyloseq::distance(ps_clr_2019, method = "euclidean")
+# make a data frame from the sample_data
+sampledf_2019 <- data.frame(sample_data(ps_clr_2019))
+adonis2(dist_matrix_2019 ~ cdefo, data = sampledf_2019)
+
+
+#2020
+#Generate distance matrix
+dist_matrix_2020 <- phyloseq::distance(ps_clr_2020, method = "euclidean")
+# make a data frame from the sample_data
+sampledf_2020 <- data.frame(sample_data(ps_clr_2020))
+
+adonis2(dist_matrix_2020 ~ cdefo, data = sampledf_2020)
+
+#2021
+#Generate distance matrix
+dist_matrix_2021 <- phyloseq::distance(ps_clr_2021, method = "euclidean")
+# make a data frame from the sample_data
+sampledf_2021 <- data.frame(sample_data(ps_clr_2021))
+adonis2(dist_matrix_2021 ~ cdefo, data = sampledf_2021)
+```
+
+## Algal Biomass Models
+
+ - incubation period only to align with fungi and bacteria 
+
+```{r}
+#create waterchem incmeans wide from streams
+
+
+algae <- waterchem_incmeans_wide %>%
+  filter(year != "2020") %>%
+  dplyr::select(1,2,3,9,10,13,22)
+
+colnames(algae)[4] <- "Cyanobacteria"
+colnames(algae)[5] <- "Diatoms"
+colnames(algae)[6] <- "Green Algae"
+colnames(algae)[7] <- "Total Algae"
+
+defo_algae <- algae %>%
+        inner_join(HAIFLO, by = c("site", "year"))
+
+#pivot long
+defo_algae_long <- pivot_longer(defo_algae, cols = 4:7, values_to = "algal_biomass", names_to = "algal_parameter")
+
+defo_algae_long <- defo_algae_long %>%
+  mutate(Region = case_when(
+    startsWith(site, "L") ~ "Lower",
+    startsWith(site, "C") ~ "Central",
+    startsWith(site, "U") ~ "Upper"
+    ))
+
+colnames(defo_algae_long)[2] <- "Year"
+
+p1 <- defo_algae_long  %>%
+  dplyr::filter(algal_parameter == "Total Algae") %>%
+        ggscatter(x = "cdefo", y = "algal_biomass", color = "Year", shape = "Region", 
+                  size = 5, add = "reg.line", conf.int = TRUE,
+                  show.legend.text = FALSE) + stat_cor(p.accuracy = 0.01, r.accuracy = 0.01, aes(size =5, label = paste(..r.label.., ..p.label.., sep = "~`,`~")), show.legend = FALSE, size = 5) + scale_color_manual(values = c("#1b9e77", "#7570b3")) + scale_fill_manual(values = c("#1b9e77", "#7570b3")) + facet_grid(~Year, scales = "free_y") +xlab("Cumulative Defoliation") + ylab(bquote('Algal Biomass ' *(ug/cm^2)*'')) + theme_bw(base_size = 16) + theme(legend.position = "bottom") + theme(legend.position = "bottom", panel.grid.major = element_blank(),
+panel.grid.minor = element_blank()) + theme(legend.box.background=element_rect(color = "black", size = 1))  + scale_shape_discrete(breaks=c('Lower', 'Central', 'Upper'), guide = guide_legend(byrow = TRUE)) + labs(shape = "Watershed Cluster")
+
+p1
+  
+# HP total biomass 
+  
+mydata <- defo_algae %>%
+  dplyr::select(1,2,7,9) %>%
+  dplyr::rename(Total_Algae = "Total Algae")
+
+watersheds <- watersheds %>%
+        rename(site = Site)
+
+mydata <- mydata %>%
+        inner_join(watersheds, by = c("site"))
+
+mydata <- mydata %>%
+  left_join(mortality, by = c("site", "year"))
+#change NAs to 0
+mydata <- mydata %>%
+  replace_na(list(Mortality = 0))
+
+mydata19 <- mydata %>%
+        filter(year=="2019")
+
+mydata20 <- mydata %>%
+        filter(year=="2020")
+
+mydata21 <- mydata %>%
+        filter(year=="2021")
+
+#elevation, defo, spfir, aspect, wet cover
+HPmod_land19 <- rdacca.hp(mydata19$Total_Algae, mydata19[,c("Mean_Elevation", "cdefo", "SpFir_Percent", "Mean_aspect_degrees", "Wetland_PercentCover")], var.part = TRUE)
+#plot(HPmod_land19, plot.perc = TRUE)
+HPmod_land19
+
+HPmod_land21<- rdacca.hp(mydata21$Total_Algae, mydata21[,c("Mean_Elevation", "cdefo", "SpFir_Percent", "Mean_aspect_degrees", "Wetland_PercentCover")], var.part = TRUE)
+#plot(HPmod_land21, plot.perc = TRUE)
+HPmod_land21
+
+#plot total and then put unique and shared into a table
+
+HP_vals_c21 <- (as.data.frame(HPmod_land21[[4]]))
+HP_vals_c21$parameter <- row.names(HP_vals_c21)  
+
+HP_vals_c21 <- HP_vals_c21 %>%
+dplyr::select(4,5)
+
+HP_vals_c21_long <- HP_vals_c21 
+       # %>% pivot_longer(
+             #   cols = 1:2,
+               # names_to = c("condition"),
+               # values_to = "value")
+
+HP_vals_c21_long$year <- "2021"
+ 
+
+#2019
+HP_vals_c19 <- (as.data.frame(HPmod_land19[[4]]))
+HP_vals_c19$parameter <- row.names(HP_vals_c19)  
+
+HP_vals_c19 <- HP_vals_c19 %>%
+dplyr::select(4,5)
+
+HP_vals_c19_long <- HP_vals_c19 
+#%>% 
+        #pivot_longer(
+              #  cols = 1:2,
+              #  names_to = c("condition"),
+              #  values_to = "value")
+
+HP_vals_c19_long$year <- "2019"
+                                    
+#join years together
+HP_vals_long <- rbind(HP_vals_c19_long, HP_vals_c21_long)
+
+#HP_vals_long <- HP_vals_long %>%
+  #dplyr::rename(Condition = condition)
+
+HP_vals_long <- HP_vals_long %>%
+dplyr::rename(Indiv.perc = "I.perc(%)")
+#HP_vals_long$Condition <- as.factor(HP_vals_long$Condition)
+
+#need to change order of the factors
+HP_vals_long$parameter <- HP_vals_long$parameter %>%
+factor(levels = c("SpFir_Percent","cdefo", "Mean_Elevation","Wetland_PercentCover","Mean_aspect_degrees"))
+
+p2 <- ggplot(HP_vals_long, aes(y=Indiv.perc, x=parameter, fill = parameter)) + 
+    geom_bar(stat="identity") + facet_wrap(~year) +   
+ scale_x_discrete(labels=c("% Spruce-Fir", "Cumulative Defoliation", "Elevation", "% Wetland", "Aspect")) + 
+  theme_bw(base_size = 16) +
+ xlab("Landscape Metric") + ylab(expression(atop("% Individual Contribution", paste("to Algal Biomass R " ^2)))) +
+#scale_fill_discrete(labels=c('Total Variance', 'Unique Variance')) +
+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black"), panel.border = element_rect(color="black", fill=NA), axis.text.x = element_text(angle = 45, hjust = 1, vjust=1), legend.position = "none") + scale_fill_brewer(palette="Dark2")
+
+ann_text <- data.frame(parameter = "Mean_Elevation",Indiv.perc = 85 ,lab = c("R^2==0.88", "R^2==0.51"), year= c("2019","2021"))
+
+p3 <- p2 + geom_text(data = ann_text, size = 5, nudge_x = .3,aes(x = parameter, y = Indiv.perc, label = lab), parse = TRUE)
+
+algae <- ggarrange(p1, p3,
+          labels = c("a", "b"),
+          font.label=list(size = 22, color = "black", face = "bold"),
+          ncol = 1, nrow = 2)
+
+algae
+
+ggsave(
+  filename = "algae.png",
+  plot = algae,
+  path = NULL,
+  width = 8.5,
+ height = 12,
+units = "cm",
+  dpi = 300,
+scaling = 0.4
+)
+```
+
+# Stream Microbiome Functions - Extracellular Enzyme Asssays
+
+* note site C07 in 2021 originally had a lab issue and was re-run. Analyses here are with those corrected values. 
+* XY, NAG, PHOS, and CELO enzyme activity plotted per site, per year
+* CELO added for manuscript (cellubiodase)
+* 1 leafpack missing in 2021 (no leaves in leafpack)
+
+## Weight corrected enzyme activities
+
+```{r}
+#leafpacks <- readRDS("~/SBW Data/SBWD_master-main_2023May15/SBWD_master-main/data/leafpacks.RDS")
+
+#NAG, PHOS, and XY
+#enzymes_2019_2021 <- dplyr::select(leafpacks, -inc_days, -mass.loss.g, -percent.loss, -cpom.g, -fpom.g, -cpim.g, -fpim.g)
+
+#long format
+#enzymes <- enzymes_2019_2021 %>% pivot_longer(cols = c(4,5,6), names_to = "enzyme", values_to = "activity.nmol.h.g")
+
+#enzymes$enzyme <- gsub("\\..*", "", enzymes$enzyme) 
+
+#enzymes_3 <- enzymes %>%
+#  dplyr::select(1,3, 2, 4, 5)
+
+#pull in enzymes file - add to repo and pull from there
+
+#try facet grid of all data
+#reorder enzyme type 
+enzymes$Enzyme_type <- enzymes$Enzyme_type %>%
+  factor(levels = c("XY", "NAG", "PHOS"))
+
+enzymes <- enzymes %>%
+  dplyr::select(1,3,2,4,5) %>%
+  rename(enzyme = Enzyme_type) %>%
+  rename(activity.nmol.h.g = Enzyme_Activity_nmol.h.g)
+
+#add CELO to repo
+library(readr)
+SBWD_2019_21_CELO <- read_csv("~/SBW Data/enzymes/SBWD_2019-21_CELO.csv", col_types = cols(...10 = col_skip()))
+
+enzymes_CELO <- SBWD_2019_21_CELO %>%
+ dplyr::select(1,3,7,8)
+
+enzymes_CELO <- enzymes_CELO %>% separate_wider_delim(Sample_new, "-", names = c("site", "rep"))
+
+enzymes <- rbind(enzymes, enzymes_CELO)
+
+#moisture correct - add to repo
+library(readr)
+SBWD_2019_21_Moisture <- read_csv("~/SBW Data/enzymes/SBWD_2019-21_Moisture.csv")
+
+enzymes_Moisture <- SBWD_2019_21_Moisture %>% separate_wider_delim(Sample_new, "-", names = c("site", "rep"))
+
+enzymes_Moisture <- enzymes_Moisture %>% dplyr::select(1,2,5,4,6) %>%
+  rename(year = Year)
+
+enzymes_corrected <- enzymes %>%
+  left_join(enzymes_Moisture, by = c("site", "rep", "year"))
+
+enzymes_corrected$activity.nmol.h.g_corrected <- enzymes_corrected$activity.nmol.h.g/enzymes_corrected$Proportion_dry
+
+enzymes_corrected <- na.omit(enzymes_corrected)
+
+#try facet grid of all data
+enzymes_corrected$enzyme <- as.factor(enzymes_corrected$enzyme)
+enzymes_corrected$year <- as.factor(enzymes_corrected$year)
+
+enzymes_corrected %>%
+        ggplot(aes(x = site, y = activity.nmol.h.g_corrected, fill = year)) +
+        facet_wrap(~enzyme, scales = "free") +
+        geom_boxplot() +
+        labs(title = "Enzyme activity") + theme_bw(base_size = 16) + scale_fill_brewer(palette = "Dark2")
+```
+
+# Enzymes and Defoliation
+
+```{r}
+#summarize enzymes
+enzymes_corrected_summary <- enzymes_corrected %>%
+  group_by(site,year, enzyme) %>%
+  summarise(mean_activity_corrected=mean(activity.nmol.h.g_corrected))
+
+enzymes_corrected_summary <- enzymes_corrected_summary %>%
+  left_join(HAIFLO, by=c("site","year"))
+
+#new defo
+
+p1 <- enzymes_corrected_summary %>%
+        ggscatter(x = "cdefo", y = "mean_activity_corrected", color = "enzyme",
+                  conf.int = FALSE, size = 4,  font.label = c(14, "plain"),
+                  cor.coef = TRUE, cor.method = "pearson",
+                  xlab = "Cumulative Defoliation", ylab = "Mean Enzyme Activity (Weight Corrected)") +
+facet_grid(enzyme~year, scales = "free_y")
+
+p1 + theme_bw(base_size = 22) + theme(legend.position = "bottom", panel.grid.major = element_blank(),
+panel.grid.minor = element_blank()) + theme(legend.box.background=element_rect(color = "black", size = 1))
+
+#put PHOS and CELO in one file and the others in SI
+PHOS21 <- enzymes_corrected_summary %>%
+  filter(enzyme == "PHOS") %>%
+  filter(year == "2021")
+  
+CELO21 <- enzymes_corrected_summary %>%
+filter(enzyme == "CELO") %>%
+  filter(year == "2021")
+
+
+p1 <- enzymes_corrected_summary %>%
+  filter(enzyme %in% c("CELO", "PHOS")) %>%
+        ggscatter(x = "cdefo", y = "mean_activity_corrected", color = "enzyme",
+                  conf.int = FALSE, size = 4,  font.label = c(14, "plain"),
+                  cor.coef = TRUE, cor.method = "pearson", cor.coef.size = 5,
+                  xlab = "Cumulative Defoliation") + ylab(bquote('Mean Enzyme Activity ( '*nmol~h^-1~g*')')) +
+facet_grid(enzyme~year, scales = "free_y") + geom_smooth(data = CELO21, method = "lm", color = "#d95f02", fill = "#d95f02")  + geom_smooth(data = PHOS21, method = "lm", color = "#1b9e77", fill = "#1b9e77")
+
+p1 + theme_bw(base_size = 22) + theme(legend.position = "bottom", panel.grid.major = element_blank(),
+panel.grid.minor = element_blank()) + theme(legend.box.background=element_rect(color = "black", size = 1)) + scale_fill_brewer(palette = "Dark2", guide = "none")  + scale_color_brewer(palette = "Dark2", guide = "none")
+
+
+
+#SI
+p1 <- enzymes_corrected_summary %>%
+  filter(enzyme %in% c("XY", "NAG")) %>%
+        ggscatter(x = "cdefo", y = "mean_activity_corrected", color = "enzyme",
+                  conf.int = FALSE, size = 4,  font.label = c(14, "plain"),
+                  cor.coef = TRUE, cor.method = "pearson",cor.coef.size = 5,
+                  xlab = "Cumulative Defoliation", ylab = "Mean Enzyme Activity (Weight Corrected)") +
+facet_grid(enzyme~year, scales = "free_y")
+
+p1 + theme_bw(base_size = 22) + theme(legend.position = "bottom", panel.grid.major = element_blank(),
+panel.grid.minor = element_blank()) + theme(legend.box.background=element_rect(color = "black", size = 1)) + scale_fill_brewer(palette = "Dark2", guide = "none")  + scale_color_brewer(palette = "Dark2", guide = "none")
+
+```
+
+
+## Microbiome Functions - Bacteria (PiCRUST)
+
+```{r PICRUST}
+#import TSV file into data frame
+picr16s <- read.table(file = '~/Bioinformatics/picrust2_out_pipeline/pathways_out/path_abun_unstrat.tsv', sep = '\t', header = TRUE)
+
+#metacyc ontology
+metacyc <- read.delim(file = '~\\SBW Data\\MetaCyc\\MetaCyc_Ontology.txt')
+
+metacyc <- metacyc %>%
+  dplyr::rename(pathway = Pathways)
+
+pathways_long <- picr16s %>% 
+        pivot_longer(
+                cols = 2:216,
+                names_to = c("site", "rep", "year"),
+                names_sep = "_",
+                values_to = "value")
+
+
+pathways_ontology <- pathways_long %>%
+        left_join(metacyc, by = "pathway")
+
+pathways_ontology <- pathways_ontology %>%
+  dplyr::select(-6, -8, -9, -10, -11, -12, -14, - 15, -16, -18)
+
+
+pathways_ontology <- pathways_ontology %>%
+  dplyr::rename(pathway_type = Ontology...pathway.type)
+
+pathways_ontology$pathway_type <- as.factor(pathways_ontology$pathway_type)
+
+#need to get relative abundance not raw abundance
+#need to get total number of reads per site per rep
+totalabund2 <- pathways_ontology %>%
+  group_by(site, rep, year) %>%
+  dplyr::summarize(totalreads = sum(value))
+
+#join together so we can then calculate proportion
+FunAbund <- pathways_ontology %>%
+        inner_join(totalabund2, by = c("site", "year", "rep"))
+        
+#add relative abundance column
+fun_reps <- FunAbund %>%
+  mutate(Relative_Abundance = value/totalreads)
+
+fun_reps$site <- fun_reps$site %>%    
+        factor(levels = c("U01","U02","U03","C04","C05", "C06","C07","L08","L09", "L10","L11","L12"))
+
+fun_reps$year <- as.factor(fun_reps$year)
+
+#split the rows
+fun_sep <- fun_reps %>%
+   separate_rows(pathway_type, sep = " // ", convert = TRUE)
+
+#sum the relative abundance 
+fun_sep_summary <- fun_sep %>%
+  group_by(site, rep, year, pathway_type) %>%
+  dplyr::summarize(sum_types = sum(Relative_Abundance))
+
+#remove superpathways (they are now combined in with their respective groups, don't need seaprate category for general super pathways)
+fun_sep_summary <- fun_sep_summary %>%
+  filter(pathway_type != "Super-Pathways")
+
+#unique(fun_sep_summary$pathway_type) #35 groups
+
+#join defo to all_met
+
+pathway_defo_all <- fun_sep_summary %>%
+        inner_join(HAIFLO, by = c("site", "year"))
+
+#get rid of anything with 0 value
+pathway_defo_all2 <- pathway_defo_all %>%
+  filter(sum_types > 0)
+
+#get rid of any pathway with less than 5 observations 
+pathway_defo_allmatch <- pathway_defo_all2 %>%
+ group_by(year, pathway_type) %>%
+dplyr::summarize(numpaths = n()) %>%
+  filter(numpaths >= 5) 
+
+pathway_defo_all4 <- pathway_defo_all2 %>%
+  inner_join(pathway_defo_allmatch, by = c("pathway_type", "year"))
+
+#sig in all 3 years
+filter_test <- pathway_defo_all4 %>%
+  group_by(year, pathway_type) %>%
+ rstatix::cor_test(sum_types, cdefo) %>%
+group_by(pathway_type) %>%
+      filter(max(p) < 0.01)
+
+pathways_cdefo_all <- filter_test
+#saveRDS(pathways_cdefo, file = "pathways_cdefo.RDS")
+
+# ok so we have 4 fun groups in all 3 years, restrict to just those ones and plot
+
+pathway_defo_all4$pathway_type <- as.factor(pathway_defo_all4$pathway_type)
+
+#main text plot
+
+shortforms <- c("AROMATIC-COMPOUNDS-DEGRADATION" = "Aromatic Compound Degradation", "Carbohydrates-Biosynthesis" = "Carbohydrate Bioysnthesis")
+
+    picrust_plot <-   pathway_defo_all4 %>%
+  filter(pathway_type %in% c("AROMATIC-COMPOUNDS-DEGRADATION", "Carbohydrates-Biosynthesis")) %>%
+       ggscatter(x = "cdefo", y = "sum_types", color = "year", 
+                add = "reg.line", conf.int = TRUE, cor.coef.size = 5) +
+                stat_cor(p.accuracy = 0.01, r.accuracy = 0.01,
+           aes(size = 5, label = paste(..r.label.., ..p.label.., sep = "~`,`~")), show.legend = FALSE, size = 5) + xlab("Cumulative Defoliation") + ylab("Relative Abundance")  + facet_grid(pathway_type~year, scales = "free_y", labeller = labeller(pathway_type = as_labeller(shortforms))) + theme_bw(base_size = 18) + theme(legend.position = "bottom", panel.grid.major = element_blank(),
+panel.grid.minor = element_blank())  + scale_fill_brewer(palette="Dark2") + scale_color_brewer(palette="Dark2")
+       
+  ggsave(
+  filename = "picrust_plot.png",
+  plot = picrust_plot,
+  path = NULL,
+  width = 8.5,
+ height = 10,
+units = "cm",
+  dpi = 300,
+scaling = 0.4
+)
+       
+
+  #SI plot
+       pathway_defo_all4 %>%
+  filter(pathway_type %in% c("Alcohol-Degradation", "Aminoacyl-tRNAs-Charging")) %>%
+       ggscatter(x = "cdefo", y = "sum_types", color = "year", 
+                add = "reg.line", conf.int = TRUE, cor.coef.size = 5) +
+                stat_cor(p.accuracy = 0.01, r.accuracy = 0.01,
+           aes(size = 5, label = paste(..r.label.., ..p.label.., sep = "~`,`~")), show.legend = FALSE, size = 5) + xlab("Cumulative Defoliation") + ylab("Relative Abundance")  + facet_grid(pathway_type~year, scales = "free_y") + theme_bw(base_size = 18) + theme(legend.position = "bottom", panel.grid.major = element_blank(),
+panel.grid.minor = element_blank())  + scale_fill_brewer(palette="Dark2") + scale_color_brewer(palette="Dark2")
+      
+```
+
