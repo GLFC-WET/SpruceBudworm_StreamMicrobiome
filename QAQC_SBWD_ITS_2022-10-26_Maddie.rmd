@@ -1,0 +1,346 @@
+---
+title: "SBWD ITS processing"
+author: "Emily Smenderovac, edited by Maddie McCaig"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## ## Sequencing/Bioinformatics Outline
+- Leaf samples broken down, homogenized, and frozen at GLFC
+- DNA extracted using the Qiagen PowerSoil Kit
+- DNA sequenced via metabarcoding via the GRDI ecobiomics project (16S, ITS)
+- Sequence data processed using the MetaWorks pipeline version 1.10.0 (Porter, T.M., Hajibabaei, M. 2020.  METAWORKS: A flexible, scalable bioinformatic pipeline for multi-marker biodiversity assessments.  BioRxiv, doi: https://doi.org/10.1101/2020.07.14.202960)
+- Processed sequence data with samples containing <1000 seq removed 
+- Sequence data was not rarefied as read counts reached a plateau 
+- Raw data (after bioinformatic processing no rarefaction) can be found in file ending with results.csv.
+
+Bioinformatics run steps:
+1- transfer raw seq files to data file
+2- cp pipeline files to live.run
+3- cd to live.run folder
+4- create/activate conda environment
+5- rename raw seq files as need to match config_ESV file
+6- edit config_ESV file
+7- run using snakemake 
+8- move results files to archive
+9- run CM.processing.R code to generate run stats and rarefied community matrix
+10- rm raw seq data
+
+*See https://github.com/terrimporter/MetaWorks for specific details on metaworksv1.10.0 pipeline
+
+Version notes:
+Conda v4.9.1
+RDP 2.13 
+Fungal_Unitev8.3 - make sure to cite Terri on this as well because RDP classifier didn't have it updated with 2021 version https://github.com/terrimporter/UNITE_ITSClassifier 
+
+Primer information:
+1. ITS2
+* Forward "fITS9" (Ihrmark et al., 2012): sequence = GAACGCAGCRAAIIGYGA, Cutadapt = GAACGCAGCRAADDGYGA
+* Reverse "ITS4" (White et al., 1990): sequence = TCCTCCGCTTATTGATATGC, Cutadapt = GCATATCAATAAGCGGAGGA
+**Cutadapt = I->D, rev com reverse primer
+
+## Copied fastq's to Linux directory and renamed
+
+```{bash data_prep, eval=FALSE}
+## Set up directories for processing
+#create the bioinformatics folder that this is being saved in
+mkdir Bioinformatics
+cd Bioinformatics
+mkdir current.pipelines
+mkdir live.run
+mkdir current.reference.sets
+
+#Latest MetaWorks pipeline
+wget -P /home/mmccaig/Bioinformatics/current.pipelines https://github.com/terrimporter/MetaWorks/releases/download/v1.10.0/MetaWorks1.10.0.zip 
+unzip /home/mmccaig/Bioinformatics/current.pipelines/MetaWorks1.10.0.zip
+#Download RDP classifier if haven't already
+
+wget -P /home/mmccaig/Bioinformatics/live.run https://sourceforge.net/projects/rdp-classifier/files/rdp-classifier/rdp_classifier_2.13.zip/download
+
+https://sourceforge.net/projects/rdp-classifier/files/latest/download
+
+#don't need to unzip rdp classifier?
+#Download 2021 ITS Unite (RDP Classifier has it included but only the 2014, it hasn't been updated with the latest version)
+#Get the latest RDP-formatted UNITE training set
+wget -P /home/mmccaig/Bioinformatics/live.run https://github.com/terrimporter/UNITE_ITSClassifier/releases/download/v2.0/mydata_trained.tar.gz
+# decompress it
+tar -xzf mydata_trained.tar.gz
+#ORFfinder
+#this is only needed for pseudogene filtering which is not necessary for 16s and ITS so skip this step
+#wget ftp://ftp.ncbi.nlm.nih.gov/genomes/TOOLS/ORFfinder/linux-i64/ORFfinder.gz
+#gunzip ORFfinder.gz
+#not sure what chmod 755 does?? something about user permissions
+#chmod 755 ORFfinder
+#mv ORFfinder ~/miniconda3/envs/MetaWorks_v1.10.0/bin/.
+
+#probably need to install miniconda too
+wget -P /home/mmccaig
+https://repo.anaconda.com/miniconda/Miniconda3-py39_4.12.0-Linux-x86_64.sh
+bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
+rm -rf ~/miniconda3/miniconda.sh
+~/miniconda3/bin/conda init bash
+~/miniconda3/bin/conda init zsh
+
+#for some reason when I unzipped the MetaWorks file it ended up in Bioinformatics folder rather than current pipelines but that's fine
+#copy it to live.run folder
+cd Bioinformatics
+cp -r MetaWorks1.10.0/* live.run
+
+### Used live.run because any attempts to use alternative paths failed horribly.
+cd live.run
+
+#remember that this directory needs to be within the folder you are running in
+#so if have live.run/MetaWorks1.10.0 then it needs to be in there
+#but if just have live.run and the stuff from the MetaWorks1.10.0 folder copied into live.run, the ITS_fastq can be in there. 
+#basically just have to have everything in the same folder as the MetaWorks stuff or it will cause issues
+mkdir ITS_fastq
+
+## copy over files
+#copied over using WinSCP
+cp ../../../EnvChem/project_data_Emilson/SBWD/leafpack_microbes/*ITS_fastq_files/* ITS_fastq
+
+scp Y:\project_data_Emilson\SBWD\leafpack_microbes\*ITS_fastq_files* ITS_fastq mmccaig@132.156.202.0:\Bioinformatics\live.run\ITS_fastq
+
+## fix file names for parsing
+
+cd ITS_fastq
+#\. This means to actually look for the . Character
+#saying to rename anything that is .fq to .fastq because metaworks doesn't like the .fq
+
+rename  \.fq \.fastq  *
+#also getting rid of all the extra stuff in the file names
+for f in *; do mv "$f" "${f//_ITS_*_R/_R}"; done
+for f in *; do mv "$f" "${f//GRDI-ECO_*_AM-EE-/}"; done
+
+#change old site names to new site names
+for f in *; do mv "$f" "${f//N1/L09}"; done
+for f in *; do mv "$f" "${f//N2/L11}"; done
+for f in *; do mv "$f" "${f//N4/C04}"; done
+for f in *; do mv "$f" "${f//N5/C05}"; done
+for f in *; do mv "$f" "${f//N6/C07}"; done
+for f in *; do mv "$f" "${f//S1/L10}"; done
+for f in *; do mv "$f" "${f//S2/L12}"; done
+for f in *; do mv "$f" "${f//S3/L08}"; done
+for f in *; do mv "$f" "${f//S4/U01}"; done
+for f in *; do mv "$f" "${f//S5/U02}"; done
+for f in *; do mv "$f" "${f//S6/U03}"; done
+for f in *; do mv "$f" "${f//P20/C06}"; done
+
+#if you haven't set up the environment yet you need to do this
+#need to do this from within the MetaWorks folder
+conda env create -f environment.yml
+#but only do it once, now should be good to go
+
+#note some conda issues creeping up after the Linux machine was updated
+#need to run exec bash then:
+#export CURL_CA_BUNDLE=/etc/pki/ca-trust/extracted/openssl/ca-bundle.trust.crt 
+#export REQUESTS_CA_BUNDLE=/etc/pki/ca-trust/extracted/openssl/ca-bundle.trust.crt  
+#export SSL_CERT_FILE=/etc/pki/ca-trust/extracted/openssl/ca-bundle.trust.crt
+
+cd ..
+
+conda activate MetaWorks_v1.10.0
+
+## config file was edited at this point - if necessary ### standard ITS config file is MetaWorks1.8.1 folder
+#may need to increase memory significantly for rdp classifier. default is 8, try 30 or 50
+#also need to be careful with path names as MetaWorks can get confused. if you have live.run/MetaWorks, need to run it from right in MetaWorks
+#for path to rdp classifier it should be /home/mmccaig/Bioinformatics/live.run etc. can't have it as ~/Bioinformatics
+
+#Run script after editing config.yaml file
+snakemake --jobs 36 --snakefile snakefile_ESV --configfile config_ESV_ITS.yaml
+
+cp config_ESV_ITS.yaml ITS
+cp ITS_adapters.fasta ITS
+
+rm -r ITS_fastq
+mv ITS ../../SBWD_ITS_20221026
+```
+
+
+
+```{bash on_local, eval=FALSE}
+## get files over to appropriate folder
+#I just used WinSCP to transfer back to ENVCHEM
+
+#Emily did this way
+#mkdir EnvChem/wet_analyses_bioinformatics_archive/SBWD/ITS/*
+
+#scp -r esmender@132.156.202.255:Bioinformatics/SBWD_ITS_20210817 E:/wet_analyses_bioinformatics_archive/SBWD
+
+```
+
+
+## QAQC of Metabarcoding Data
+```{r set_variables_load_libraries}
+library(dplyr)
+library(vegan)
+library(readr)
+library(tidyverse)
+
+PROJ.ID <- "SBWD"
+amplicon <- "ITS"
+
+drive <- "//NRONP6AwvFSP001/EnvChem"
+
+## pull the processing that has been done most recently
+archives <- list.dirs(paste(drive, "wet_analyses_bioinformatics_archive", PROJ.ID, sep="/"), recursive = FALSE)
+
+archives <- grep(amplicon, archives, value = TRUE)
+archives_date <- as.POSIXct(str_extract(archives, "[[:digit:]]+$"), format = "%Y%m%d")
+archive <- archives[archives_date == max(archives_date)]
+
+rm(archives, archives_date)
+```
+
+## Summary of Sequence counts before and after primer trimming 
+```{r stats_summary_table_1}
+## Import data
+summary.table.1 <- data.frame()
+for(stat in c("R1", "R2", "paired", "trimmed")){
+  temp <-  as.data.frame(read.delim(paste(archive, "stats", paste0(stat, ".stats"), sep = "/"), header = TRUE))
+  temp.sum <- as.data.frame(as.list(c(sum(temp$TotSeqs),mean(temp$TotSeqs), mean(temp$MinLength), mean(temp$MaxLength), mean(temp$MeanLength))),col.names=c("Total seq number (across samples)","Mean seq number (per sample)", "min seq length","max seq length","mean seq length"), check.names = FALSE)
+  summary.table.1 <- rbind(summary.table.1, temp.sum)
+  assign(stat, temp)
+  rm(temp, temp.sum)
+}
+rownames(summary.table.1) <- c("R1", "R2", "paired", "trimmed")
+
+## export summary table 
+write.csv(summary.table.1,file=paste0(archive,"/SummaryStats_",PROJ.ID,"_",Sys.Date(),"_",amplicon,".csv"))
+
+knitr::kable(summary.table.1)
+```
+
+
+
+## Summary of dereplication and chimera removal
+```{r derep_chimera}
+dereplication <- read.csv(paste(archive,  "dereplication.log", sep = "/"), header = FALSE)
+dereplication<-as.list(c(as.character(dereplication$V1[5]),as.character(dereplication$V2[4]), as.character(dereplication$V3[4]), as.character(dereplication$V4[4])))
+dereplication[1]<-gsub(" unique sequences", "", dereplication[1])
+dereplication[2]<-gsub(" min ", "", dereplication[2])
+dereplication[3]<-gsub(" max ", "", dereplication[3])
+dereplication[4]<-gsub(" avg ", "", dereplication[4])
+
+chimeraRemoval <- read.csv(paste(archive, "chimeraRemoval.log", sep = "/"), header=FALSE)
+chimeraRemoval<-as.list(c(as.character(chimeraRemoval$V1[12]),as.character(chimeraRemoval$V2[4]), as.character(chimeraRemoval$V3[4]), as.character(chimeraRemoval$V4[4])))
+chimeraRemoval[1]<-gsub("F230/cat.denoised: 66/9694 chimeras ", "", chimeraRemoval[1])
+chimeraRemoval[2]<-gsub(" min ", "", chimeraRemoval[2])
+chimeraRemoval[3]<-gsub(" max ", "", chimeraRemoval[3])
+chimeraRemoval[4]<-gsub(" avg ", "", chimeraRemoval[4])
+
+dereplication <- as.data.frame(dereplication, col.names=c("number","min", "max", "mean"))
+chimeraRemoval <- as.data.frame(chimeraRemoval, col.names=c("number","min", "max", "mean"))
+summary_table2 <- rbind(dereplication, chimeraRemoval) 
+row.names(summary_table2) <- c("dereplication", "chimera removal")
+knitr::kable(summary_table2)
+```
+
+
+## Community Matrix and Rarefaction Curves
+```{r dataset_cleaning}
+tax <- read.csv(paste(archive, "results.csv", sep="/"))
+nrow.orig <- nrow(tax)
+
+tax.check <- tax[!complete.cases(tax), ]
+
+#which non-Fungi kingdoms were picked up?
+unique(tax[c("Kingdom")])
+
+## remove rows that aren't Fungi
+tax <- tax[grep("Fungi", tax$Kingdom), ]
+
+print(paste0("Number of ASVs removed based on ID as not Fungi: ", nrow.orig-nrow(tax)))
+
+## Remove amplicon from ESV names and rename as GlobalESV
+
+tax[,1] <- sub(paste0(amplicon, "\\_"), "", tax[,1])
+colnames(tax)[1] <- "GlobalESV"
+
+```
+```{r ESV table}
+ESV <- tax %>% 
+  group_by(SampleName) %>%
+  # filter out any samples less than 1000 reads ## also removes any taxa that would now be = 0
+  filter(sum(ESVsize) > 1000) %>%
+  pivot_wider(names_from = SampleName, values_from = ESVsize, values_fn = sum, values_fill = 0) %>%
+  column_to_rownames("GlobalESV")
+
+print(paste0(str_c(unique(tax$SampleName)[!unique(tax$SampleName) %in% colnames(ESV)], collapse = ", "), " removed due to low read count (<1000)."))
+```
+
+```{r rarefaction_curves}
+rarecurve(t(ESV[,colnames(ESV) %in% grep("2019", tax$SampleName, value = T)]), step = 171, ylab="ESVs", xlab="Sequencing Depth", main = "2019 Samples", label = FALSE)
+rarecurve(t(ESV[,colnames(ESV) %in% grep("2020", tax$SampleName, value = T)]), step = 171, ylab="ESVs", xlab="Sequencing Depth", main = "2020 Samples", label = FALSE)
+rarecurve(t(ESV[,colnames(ESV) %in% grep("2021", tax$SampleName, value = T)]), step = 171, ylab="ESVs", xlab="Sequencing Depth", main = "2021 Samples", label = FALSE)
+```
+
+
+Data look to be reaching plateau, so rarefied data were not supplied for subsequent analyses.
+
+```{r clean and export}
+#clean up dataset and export
+#remove strand column
+ESV <- select(ESV, -"Strand")
+#fix column names (want only C04_4_2019)
+#for columns 26 to 239 
+names(ESV)[26:239] <- substr(names(ESV)[26:239],1,10)
+
+datayears <- as.numeric(unique(str_sub(str_extract(tax$SampleName, "_[[:digit:]]{2,}_.+$"),2,5)))
+
+## Write the cleaned ESV data to the appropriate project data folder
+write.csv(ESV, paste(drive, "project_data_Emilson", PROJ.ID, "leafpack_microbes", paste0(PROJ.ID, "_",  min(datayears), "-", max(datayears), "_lp_", tolower(amplicon), ".csv"), sep="/"))
+```
+
+
+```{r rarefying_15th_percentile, eval=FALSE, echo=TRUE}
+## TURN TO eval = True if rarefying required. If all samples reach plateau, rarefying is not necessary for compositional analysis, relative abundance or presence/absence analysis.
+
+ESV.4.r <- t(ESV[,colnames(ESV) %in% tax$SampleName])
+
+## Rarefy based on the 15th percentile
+ESV.r <- rrarefy(ESV.4.r, quantile(rowSums(ESV.4.r), .15))
+
+## Remove any sites with 10X less the 15th percentile
+ESV.r <- ESV.r[rowSums(ESV.r) > quantile((rowSums(ESV.4.r)), .15)/10, ]
+## get rid of any ESVs that are now zero
+ESV.r<-(ESV.r[,colSums(ESV.r) >0]) 
+
+if(sum(!rownames(ESV.4.r) %in% rownames(ESV.r))>0){
+  print(paste0(str_c(row.names(ESV.4.r)[!rownames(ESV.4.r) %in% rownames(ESV.r)], collapse = ", "), "removed as they were less than the 15th percentile"))
+  }else{
+  print("No samples removed in rarefaction")
+}
+
+## add taxa descriptions
+ESV.r <- t(as.data.frame(ESV.r)) %>% as.data.frame()
+
+tax4join <- unique(tax[,!colnames(tax) %in% c("SampleName", "ESVsize")])
+
+ESV.r$GlobalESV <- rownames(ESV.r)
+
+ESV.r <- ESV.r %>%
+  left_join(tax4join, by="GlobalESV")
+
+
+## Check Sequence depth before and after rarefaction
+#Check sequence depth before and after rarefaction
+
+depth.check<-as.data.frame(colSums(ESV[, colnames(ESV) %in% tax$SampleName]))
+depth.check[,2]<-colSums(ESV.r[, colnames(ESV.r) %in% tax$SampleName])
+colnames(depth.check)<-c("esv.seq", "esvr.seq")
+depth.check$seq.discarded<-depth.check[,1]-depth.check[,2]
+depth.check.summary<-as.data.frame(c(mean(depth.check[,"esv.seq"]),median(depth.check[,"esv.seq"]), sd(depth.check[,"esv.seq"]), min(depth.check[,"esv.seq"]), max(depth.check[,"esv.seq"])))
+colnames(depth.check.summary)<-"esv.seq"
+row.names(depth.check.summary)<-c("mean", "median","sd", "min", "max")
+depth.check.summary$esvr.seq<-c(mean(depth.check[,"esvr.seq"]), median(depth.check[,"esvr.seq"]), sd(depth.check[,"esvr.seq"]), min(depth.check[,"esvr.seq"]), max(depth.check[,"esvr.seq"]))
+knitr::kable(depth.check.summary)
+
+write.csv(ESV.r, paste(drive, "project_data_Emilson", PROJ.ID, "leafpack_microbes", paste0(PROJ.ID, "_",  min(datayears), "-", max(datayears), "_lp_", tolower(amplicon), "_rarefied15.csv"), sep="/"))
+```
+
+
