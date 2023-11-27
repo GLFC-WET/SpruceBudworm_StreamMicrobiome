@@ -528,9 +528,108 @@ p4 <- p3 + geom_smooth(method = "lm", color = "black")
 # Fig S9 Alpha Diversity
 
 ```{r alpha diversity, fig.width=12, fig.height=12}
-diversity_its <- readRDS("~/SBWD_data_analysis/EditedData/Communities/diversity/diversity_its.RDS")
-lp_its_richness <- readRDS("~/SBWD_data_analysis/EditedData/Communities/diversity/lp_its_richness.RDS")
-diversity_16s <- readRDS("~/SBWD_data_analysis/EditedData/Communities/diversity/diversity_16s.RDS")
+#start with 16s data
+#use lp_16s that was pulled in in the main manuscript file
+#need data in the proper format with sites as rows and species as columns and one file per year
+#removing the columns for the other years
+lp_16s_2019 <- dplyr::select(lp_16s, -ends_with(c("2020", "2021")))
+lp_16s_2020 <- dplyr::select(lp_16s, -ends_with(c("2019", "2021")))
+lp_16s_2021 <- dplyr::select(lp_16s, -ends_with(c("2020", "2019")))
+
+#create 2019 matrix
+lp_16s_2019_matrix <- dplyr::select(lp_16s_2019, -c(2:21))
+
+#remember the names
+n <- lp_16s_2019_matrix$ESV
+
+# transpose all but the first column (name)
+lp_16s_2019_matrix_t <- as.data.frame(t(lp_16s_2019_matrix[,-1]))
+colnames(lp_16s_2019_matrix_t) <- n
+#rename to shorten it
+lp_16s_2019 <- lp_16s_2019_matrix_t
+#save the sites into their own rds so you have them for later
+sites_16s_2019 <- lp_16s_2019                                      
+sites_16s_2019  <- tibble::rownames_to_column(sites_16s_2019, "sites") 
+sites_16s_2019 <- dplyr::select(sites_16s_2019, 1)
+
+#repeat for 2020
+lp_16s_2020_matrix <- dplyr::select(lp_16s_2020, -c(2:21))
+
+# first remember the names
+n <- lp_16s_2020_matrix$ESV
+
+# transpose all but the first column (name)
+lp_16s_2020_matrix_t <- as.data.frame(t(lp_16s_2020_matrix[,-1]))
+colnames(lp_16s_2020_matrix_t) <- n
+
+lp_16s_2020 <- lp_16s_2020_matrix_t
+
+sites_16s_2020 <- lp_16s_2020                                      
+sites_16s_2020  <- tibble::rownames_to_column(sites_16s_2020, "sites") 
+sites_16s_2020 <- dplyr::select(sites_16s_2020, 1)
+
+#repeat for 2021
+lp_16s_2021_matrix <- dplyr::select(lp_16s_2021, -c(2:21))
+
+# first remember the names
+n <- lp_16s_2021_matrix$ESV
+
+# transpose all but the first column (name)
+lp_16s_2021_matrix_t <- as.data.frame(t(lp_16s_2021_matrix[,-1]))
+colnames(lp_16s_2021_matrix_t) <- n
+
+lp_16s_2021 <- lp_16s_2021_matrix_t
+
+sites_16s_2021 <- lp_16s_2021                                      
+sites_16s_2021  <- tibble::rownames_to_column(sites_16s_2021, "sites") 
+sites_16s_2021 <- dplyr::select(sites_16s_2021, 1)
+
+#after subsetting, need to remove all ESVs with 0 (i.e. if not present in any sites in that year)
+lp_16s_2019  <- lp_16s_2019[, colSums(lp_16s_2019  != 0) > 0]
+colSums(lp_16s_2019) %>% min()
+
+lp_16s_2020  <- lp_16s_2020[, colSums(lp_16s_2020  != 0) > 0]
+colSums(lp_16s_2020) %>% min()
+
+lp_16s_2021  <- lp_16s_2021[, colSums(lp_16s_2021  != 0) > 0]
+colSums(lp_16s_2021) %>% min()
+
+##Create a data frame with the alpha diversity metrics of interest
+#2019 16S
+diversity_16s_2019 <- data.frame(sites_16s_2019, Shannon = diversity(lp_16s_2019, index="shannon"),
+                             InverseSimpson = diversity(lp_16s_2019, index="invsimpson"),
+                             richness = specnumber(lp_16s_2019)) %>%
+        mutate(Evenness = InverseSimpson/richness) %>% pivot_longer(cols=c("Shannon", "InverseSimpson", "richness", "Evenness"), names_to = "diversity_metric", values_to = "diversity") 
+        
+diversity_16s_2019 <- separate(diversity_16s_2019, col=sites, into=c('site', 'rep', 'year'), sep='_')
+#reorder low to high defoliation
+diversity_16s_2019$site <- diversity_16s_2019$site %>%    
+        factor(levels = c("L09", "L10", "L12", "L08", "L11", "U03", "C07", "C06", "U01", "C04", "C05", "U02"))
+
+## 2020 16S
+diversity_16s_2020 <- data.frame(sites_16s_2020, Shannon = diversity(lp_16s_2020, index="shannon"),
+                             InverseSimpson = diversity(lp_16s_2020, index="invsimpson"),
+                             richness = specnumber(lp_16s_2020)) %>%
+        mutate(Evenness = InverseSimpson/richness) %>% pivot_longer(cols=c("Shannon", "InverseSimpson", "richness", "Evenness"), names_to = "diversity_metric", values_to = "diversity") 
+        
+diversity_16s_2020 <- separate(diversity_16s_2020, col=sites, into=c('site', 'rep', 'year'), sep='_')
+
+diversity_16s_2020$site <- diversity_16s_2020$site %>%    
+        factor(levels = c("L10", "L08", "L09", "L12", "L11", "C06", "C07", "C05", "U03", "C04", "U01", "U02"))
+
+## 2021 16S
+diversity_16s_2021 <- data.frame(sites_16s_2021, Shannon = diversity(lp_16s_2021, index="shannon"),
+                             InverseSimpson = diversity(lp_16s_2021, index="invsimpson"),
+                             richness = specnumber(lp_16s_2021)) %>%
+        mutate(Evenness = InverseSimpson/richness) %>% pivot_longer(cols=c("Shannon", "InverseSimpson", "richness", "Evenness"), names_to = "diversity_metric", values_to = "diversity") 
+        
+diversity_16s_2021 <- separate(diversity_16s_2021, col=sites, into=c('site', 'rep', 'year'), sep='_')
+
+diversity_16s_2021$site <- diversity_16s_2021$site %>%    
+        factor(levels = c("U02", "L10", "L08", "L12", "U03", "L09", "C06", "L11", "C04", "C05", "C07", "U01"))
+
+#combine all years together so it's easier for plotting
+diversity_16s <- rbind(diversity_16s_2019, diversity_16s_2020, diversity_16s_2021)
 
 ##correlation between mean richness and mean cumulative defoliation
 diversity_16s_wide <- diversity_16s %>%
@@ -574,9 +673,111 @@ ggscatter(x = "cdefo", y = "diversity", color = "year", size = 5,
           xlab = "Cumulative Defoliation", ylab = "Bacteria Diversity") + stat_cor(p.accuracy = 0.01, r.accuracy = 0.01, aes(size = 6, label = paste(..r.label.., ..p.label.., sep = "~`,`~")), show.legend = FALSE, size = 6)  + scale_color_brewer(palette = "Dark2", guide = "none") + scale_fill_brewer(palette = "Dark2", guide = "none") + 
 facet_grid(diversity_metric~year, scales = "free_y") + theme_bw(base_size = 20)  + scale_x_continuous(labels = seq(0,15,5), breaks = seq(0,15,5))+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"))
 
-
 #ITS
 #need mean richness per site
+#use the lp_its file pulled in in main manuscript rmd
+#need data in the proper format with sites as rows and species as columns and one file per year
+#removing the columns for the other years
+
+lp_its_2019 <- dplyr::select(lp_its, -ends_with(c("2020", "2021")))
+lp_its_2020 <- dplyr::select(lp_its, -ends_with(c("2019", "2021")))
+lp_its_2021 <- dplyr::select(lp_its, -ends_with(c("2020", "2019")))
+
+#create 2019 matrix
+lp_its_2019_matrix <- dplyr::select(lp_its_2019, -c(2:26))
+
+#remember the names
+n <- lp_its_2019_matrix$ESV
+
+# transpose all but the first column (name)
+lp_its_2019_matrix_t <- as.data.frame(t(lp_its_2019_matrix[,-1]))
+colnames(lp_its_2019_matrix_t) <- n
+#rename to shorten it
+lp_its_2019 <- lp_its_2019_matrix_t
+#save the sites into their own rds so you have them for later
+sites_its_2019 <- lp_its_2019                                      
+sites_its_2019  <- tibble::rownames_to_column(sites_its_2019, "sites") 
+sites_its_2019 <- dplyr::select(sites_its_2019, 1)
+
+#repeat for 2020
+lp_its_2020_matrix <- dplyr::select(lp_its_2020, -c(2:26))
+
+# first remember the names
+n <- lp_its_2020_matrix$ESV
+
+# transpose all but the first column (name)
+lp_its_2020_matrix_t <- as.data.frame(t(lp_its_2020_matrix[,-1]))
+colnames(lp_its_2020_matrix_t) <- n
+
+lp_its_2020 <- lp_its_2020_matrix_t
+
+sites_its_2020 <- lp_its_2020                                      
+sites_its_2020  <- tibble::rownames_to_column(sites_its_2020, "sites") 
+sites_its_2020 <- dplyr::select(sites_its_2020, 1)
+
+#repeat for 2021
+lp_its_2021_matrix <- dplyr::select(lp_its_2021, -c(2:26))
+
+# first remember the names
+n <- lp_its_2021_matrix$ESV
+
+# transpose all but the first column (name)
+lp_its_2021_matrix_t <- as.data.frame(t(lp_its_2021_matrix[,-1]))
+colnames(lp_its_2021_matrix_t) <- n
+
+lp_its_2021 <- lp_its_2021_matrix_t
+
+sites_its_2021 <- lp_its_2021                                      
+sites_its_2021  <- tibble::rownames_to_column(sites_its_2021, "sites") 
+sites_its_2021 <- dplyr::select(sites_its_2021, 1)
+
+#now remove any ESVs with zeros
+lp_its_2019  <- lp_its_2019[, colSums(lp_its_2019  != 0) > 0]
+colSums(lp_its_2019) %>% min()
+
+lp_its_2020  <- lp_its_2020[, colSums(lp_its_2020  != 0) > 0]
+colSums(lp_its_2020) %>% min()
+
+lp_its_2021  <- lp_its_2021[, colSums(lp_its_2021  != 0) > 0]
+colSums(lp_its_2021) %>% min()
+
+##Create a data frame with the alpha diversity metrics of interest
+#2019 ITS
+diversity_its_2019 <- data.frame(sites_its_2019, Shannon = diversity(lp_its_2019, index="shannon"),
+                             InverseSimpson = diversity(lp_its_2019, index="invsimpson"),
+                             richness = specnumber(lp_its_2019)) %>%
+        mutate(Evenness = InverseSimpson/richness) %>% pivot_longer(cols=c("Shannon", "InverseSimpson", "richness", "Evenness"), names_to = "diversity_metric", values_to = "diversity") 
+
+diversity_its_2019 <- separate(diversity_its_2019, col=sites, into=c('site', 'rep', 'year'), sep='_')
+#reorder low to high defoliation
+diversity_its_2019$site <- diversity_its_2019$site %>%    
+        factor(levels = c("L09", "L10", "L12", "L08", "L11", "U03", "C07", "C06", "U01", "C04", "C05", "U02"))
+
+## 2020 its
+diversity_its_2020 <- data.frame(sites_its_2020, Shannon = diversity(lp_its_2020, index="shannon"),
+                             InverseSimpson = diversity(lp_its_2020, index="invsimpson"),
+                             richness = specnumber(lp_its_2020)) %>%
+        mutate(Evenness = InverseSimpson/richness) %>% pivot_longer(cols=c("Shannon", "InverseSimpson", "richness", "Evenness"), names_to = "diversity_metric", values_to = "diversity") 
+        
+diversity_its_2020 <- separate(diversity_its_2020, col=sites, into=c('site', 'rep', 'year'), sep='_')
+
+diversity_its_2020$site <- diversity_its_2020$site %>%    
+        factor(levels = c("L10", "L08", "L09", "L12", "L11", "C06", "C07", "C05", "U03", "C04", "U01", "U02"))
+
+## 2021 its
+diversity_its_2021 <- data.frame(sites_its_2021, Shannon = diversity(lp_its_2021, index="shannon"),
+                             InverseSimpson = diversity(lp_its_2021, index="invsimpson"),
+                             richness = specnumber(lp_its_2021)) %>%
+        mutate(Evenness = InverseSimpson/richness) %>% pivot_longer(cols=c("Shannon", "InverseSimpson", "richness", "Evenness"), names_to = "diversity_metric", values_to = "diversity") 
+        
+diversity_its_2021 <- separate(diversity_its_2021, col=sites, into=c('site', 'rep', 'year'), sep='_')
+
+diversity_its_2021$site <- diversity_its_2021$site %>%    
+        factor(levels = c("U02", "L10", "L08", "L12", "U03", "L09", "C06", "L11", "C04", "C05", "C07", "U01"))
+
+#combine all years together so it's easier for plotting
+diversity_its <- rbind(diversity_its_2019, diversity_its_2020, diversity_its_2021)
+
 richness_its <- diversity_its %>%
   filter(diversity_metric == "richness") %>%
   dplyr::select(-4) %>%
