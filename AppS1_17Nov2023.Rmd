@@ -113,9 +113,72 @@ theme_bw(base_size = 18)
 
 # Fig S5: Cumulative Precipiation 
 
+- data from the New Richmond Est Environment Canada Weather Station https://climate.weather.gc.ca/historical_data/search_historic_data_e.html 
+- graph showing cumulative precipitation from Nov 1 of the previous year to Oct 31 of that year
+- i.e. 2019 is Nov 1 2018 to Oct 31 2019
+- this is to account of snow accumulation/spring melt in the streams
+
 ```{r}
+library(readr)
+weather_2018 <- read_csv("~/SBW Data/EnviroCan Weather/en_climate_daily_QC_7055440_2018_P1D.csv")
 
+weather_2018 <- weather_2018 %>%
+  dplyr::select(5:8, 10,12,14,16,18, 24,26)
 
+colnames(weather_2018)[10] ="Precip_mm"
+
+weather_2019 <- read_csv("~/SBW Data/EnviroCan Weather/en_climate_daily_QC_7055440_2019_P1D.csv")
+weather_2019 <- weather_2019 %>%
+  dplyr::select(5:8, 10,12,14,16,18, 24,26)
+colnames(weather_2019)[10] ="Precip_mm"
+
+weather_2020 <- read_csv("~/SBW Data/EnviroCan Weather/en_climate_daily_QC_7055440_2020_P1D.csv")
+weather_2020 <- weather_2020 %>%
+  dplyr::select(5:8, 10,12,14,16,18, 24,26)
+colnames(weather_2020)[10] ="Precip_mm"
+
+weather_2021 <- read_csv("~/SBW Data/EnviroCan Weather/en_climate_daily_QC_7055440_2021_P1D.csv")
+weather_2021 <- weather_2021 %>%
+  dplyr::select(5:8, 10,12,14,16,18, 24,26)
+colnames(weather_2021)[10] ="Precip_mm"
+
+precip2019 <- rbind(weather_2018[305:365,], weather_2019[1:304,])
+precip2019$Precip_mm[is.na(precip2019$Precip_mm)] <- 0
+
+precip2020 <- rbind(weather_2019[305:365,], weather_2020[1:305,])
+precip2020$Precip_mm[is.na(precip2020$Precip_mm)] <- 0
+
+precip2021 <- rbind(weather_2020[306:366,], weather_2021[1:304,])
+precip2021$Precip_mm[is.na(precip2021$Precip_mm)] <- 0
+
+precip2019$precip_cumulative <- cumsum(precip2019$Precip_mm)
+precip2020$precip_cumulative <- cumsum(precip2020$Precip_mm)
+precip2021$precip_cumulative <- cumsum(precip2021$Precip_mm)
+
+precip2019$Year <- "2019"
+precip2020$Year <- "2020"
+precip2021$Year <- "2021"
+
+library(tibble)
+precip2019 <- tibble::rownames_to_column(precip2019, "DayNumber")
+precip2019$DayNumber <- as.numeric(precip2019$DayNumber)
+precip2020 <- tibble::rownames_to_column(precip2020, "DayNumber")
+precip2020$DayNumber <- as.numeric(precip2020$DayNumber)
+precip2021 <- tibble::rownames_to_column(precip2021, "DayNumber")
+precip2021$DayNumber <- as.numeric(precip2021$DayNumber)
+
+precip_final <- rbind(precip2019, precip2020, precip2021)
+
+precip_final$Year <- as.factor(precip_final$Year)
+
+library(scales)
+p <- ggplot(precip_final, aes(x = as.Date(DayNumber, "1970-11-01"), y = precip_cumulative, color = Year)) +
+  geom_line(size=2) +
+  scale_x_date(date_breaks="months", date_labels="%b") +
+  labs(x="Month",colour="")  +
+  theme_bw(base_size =16) + ylab("Cumulative Precipitation (mm)") 
+
+p + theme(legend.position = "bottom")
 ```
 
 # Fig S6 Stream Flow Models
