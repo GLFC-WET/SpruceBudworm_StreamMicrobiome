@@ -368,11 +368,15 @@ defo_temp <- defo_temp %>%
   dplyr::rename(temp_mean = mean)
 
 #plot by year
+library(ragg)
 p1 <- defo_temp  %>%
         ggscatter(x = "cdefo", y = "temp_mean", color = "year", shape = "Region", 
                   size = 5, add = "reg.line", conf.int = TRUE,
-                  show.legend.text = FALSE) + stat_cor(p.accuracy = 0.01, r.accuracy = 0.01, aes(size =6, label = paste(..r.label.., ..p.label.., sep = "~`,`~")), show.legend = FALSE, size = 6) + scale_color_brewer(palette = "Dark2") + scale_fill_brewer(palette = "Dark2", guide = "none") + facet_wrap(~year) +xlab("Cumulative Defoliation") + ylab(bquote(paste("Stream Temperature", " (", "\u00B0", "C", ")", sep = ""))) + theme_bw(base_size = 22) + theme(legend.position = "bottom", panel.grid.major = element_blank(),
-panel.grid.minor = element_blank()) + theme(legend.box.background=element_rect(color = "black", size = 1))
+                  show.legend.text = FALSE, show.legend = FALSE) + stat_cor(p.accuracy = 0.01, r.accuracy = 0.01, aes(size =5, label = paste(..r.label.., ..p.label.., sep = "~`,`~")), show.legend = FALSE, size = 5) + scale_color_brewer(palette = "Dark2") + scale_fill_brewer(palette = "Dark2", guide = "none") + facet_wrap(~year) +xlab("Cumulative Defoliation") + ylab(bquote(paste("Stream Temperature", " (", "\u00B0", "C", ")", sep = ""))) + theme_bw(base_size = 16) + theme(legend.position = "bottom", panel.grid.major = element_blank(),panel.grid.minor = element_blank(), #legend.margin=margin(-3, 0, 0, 0),
+legend.spacing.y = unit(0.05, 'cm'), legend.key.size = unit(0.2, 'cm')) +
+#legend.box.background = element_rect(color="black", size=0.5))
+  #legend.box.margin = margin(116, 6, 6, 6)) 
+  scale_shape_discrete(breaks=c('Lower', 'Central', 'Upper'), guide = guide_legend(byrow = TRUE)) + labs(shape = "Watershed Cluster")
 
 mydata <- defo_temp
 
@@ -381,7 +385,7 @@ AnnualHydro <- readRDS("~/SBWD_data_analysis/EditedData/DischargeSummary_Aug2022
 
 #install.packages("readxl")
 library(readxl)
-watersheds <- read_excel(path="~/SBW Data/watersheds.xlsx" ,
+watersheds <- read_excel(path="~/GitHub/SpruceBudworm_StreamMicrobiome/watersheds.xlsx" ,
                   sheet="watersheds",
                   col_names= TRUE)
 
@@ -499,17 +503,35 @@ factor(levels = c("SpFir_Percent","cdefo", "Mean_Elevation","Wetland_PercentCove
 p2 <- ggplot(HP_vals_long, aes(y=Indiv.perc, x=parameter, fill = parameter)) + 
     geom_bar(stat="identity") + facet_wrap(~year) +   
  scale_x_discrete(labels=c("% Spruce-Fir", "Cumulative Defoliation", "Elevation", "% Wetland", "Aspect")) + 
-  theme_bw(base_size = 22) +
- xlab("Landscape Metric") + ylab(bquote('% Individual Contribution to'*R^2*'')) +
+  theme_bw(base_size = 16) +
+ xlab("Landscape Metric") + ylab(expression(atop("% Individual Contribution",paste("to Temperature R " ^2)))) +
 #scale_fill_discrete(labels=c('Total Variance', 'Unique Variance')) +
 theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
-panel.background = element_blank(), axis.line = element_line(colour = "black"), panel.border = element_rect(color="black", fill=NA), axis.text.x = element_text(angle = 45, hjust = 1, vjust=1), legend.position = "none") + scale_fill_brewer(palette="Dark2")
+panel.background = element_blank(), axis.line = element_line(colour = "black"), panel.border = element_rect(color="black", fill=NA), axis.text.x = element_text(angle = 65, hjust = 1, vjust=1), legend.position = "none") + scale_fill_brewer(palette="Dark2")
+
+ann_text <- data.frame(parameter = "SpFir_Percent",Indiv.perc = 40 ,lab = c("R^2==0.67","R^2==0.54", "R^2==0.77"),
+                       year= c("2019","2020","2021"))
+
+p3 <- p2 + geom_text(data = ann_text, size = 5, nudge_x = 2, aes(x = parameter, y = Indiv.perc, label = lab), parse = TRUE)
 
 library(ggpubr)
-ggarrange(p1, p2,
-          labels = c("A", "B"),
+fig7 <- ggarrange(p1, p3,
+          labels = c("a", "b"),
           font.label=list(size = 22, color = "black", face = "bold"),
           ncol = 1, nrow = 2)
+
+ggsave(
+  filename = "fig7_temp.png",
+  plot = fig7,
+  path = NULL,
+  width = 8.5,
+ height = 12,
+units = "cm",
+  dpi = 300,
+scaling = 0.38
+)
+
+
 ```
 
 # Fig S8 Stream Temperature (Regional Models)
@@ -523,6 +545,17 @@ p3 <- defo_temp  %>%
 panel.grid.minor = element_blank()) + theme(legend.box.background=element_rect(color = "black", size = 1))
 
 p4 <- p3 + geom_smooth(method = "lm", color = "black")
+
+ggsave(
+  filename = "fig8_temp.png",
+  plot = p4,
+  path = NULL,
+  width = 10,
+ height = 8,
+units = "cm",
+  dpi = 300,
+scaling = 0.38
+)
 ```
 
 # Fig S9 Alpha Diversity

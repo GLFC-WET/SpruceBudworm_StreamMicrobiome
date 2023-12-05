@@ -1277,21 +1277,7 @@ scaling = 0.4
 ## Weight corrected enzyme activities
 
 ```{r}
-#leafpacks <- readRDS("~/SBW Data/SBWD_master-main_2023May15/SBWD_master-main/data/leafpacks.RDS")
-
-#NAG, PHOS, and XY
-#enzymes_2019_2021 <- dplyr::select(leafpacks, -inc_days, -mass.loss.g, -percent.loss, -cpom.g, -fpom.g, -cpim.g, -fpim.g)
-
-#long format
-#enzymes <- enzymes_2019_2021 %>% pivot_longer(cols = c(4,5,6), names_to = "enzyme", values_to = "activity.nmol.h.g")
-
-#enzymes$enzyme <- gsub("\\..*", "", enzymes$enzyme) 
-
-#enzymes_3 <- enzymes %>%
-#  dplyr::select(1,3, 2, 4, 5)
-
-#pull in enzymes file
-
+enzymes <- readRDS("~/SBWD_data_analysis/EditedData/Enzymes/OldFiles/enzymes_Oct2022.RDS")
 #try facet grid of all data
 #reorder enzyme type 
 enzymes$Enzyme_type <- enzymes$Enzyme_type %>%
@@ -1379,8 +1365,19 @@ p1 <- enzymes_corrected_summary %>%
                   xlab = "Cumulative Defoliation") + ylab(bquote('Mean Enzyme Activity ( '*nmol~h^-1~g*')')) +
 facet_grid(enzyme~year, scales = "free_y") + geom_smooth(data = CELO21, method = "lm", color = "#d95f02", fill = "#d95f02")  + geom_smooth(data = PHOS21, method = "lm", color = "#1b9e77", fill = "#1b9e77")
 
-p1 + theme_bw(base_size = 22) + theme(legend.position = "bottom", panel.grid.major = element_blank(),
+p2 <- p1 + theme_bw(base_size = 22) + theme(legend.position = "bottom", panel.grid.major = element_blank(),
 panel.grid.minor = element_blank()) + theme(legend.box.background=element_rect(color = "black", size = 1)) + scale_fill_brewer(palette = "Dark2", guide = "none")  + scale_color_brewer(palette = "Dark2", guide = "none")
+
+ggsave(
+  filename = "fig4_enzymes.png",
+  plot = p2,
+  path = NULL,
+  width = 10,
+ height = 8,
+units = "cm",
+  dpi = 300,
+scaling = 0.38
+)
 ```
 
 
